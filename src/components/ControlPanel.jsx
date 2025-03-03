@@ -1,14 +1,24 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { FaChevronLeft, FaChevronRight, FaList, FaKey, FaCube, FaTags } from 'react-icons/fa'
+import { FaChevronLeft, FaChevronRight, FaList, FaKey, FaCube, FaTags, FaCog } from 'react-icons/fa'
 import ApiKeyManager from './ApiKeyManager'
 import WordListManager from './WordListManager'
 import DimensionReductionSelector from './DimensionReductionSelector'
 import AxisLabelManager from './AxisLabelManager'
+import SettingsManager from './SettingsManager'
 import './ControlPanel.css'
 
-function ControlPanel({ words, onWordsChange, selectedAlgorithm, onAlgorithmChange, axisLabels, onAxisLabelsChange }) {
+function ControlPanel({ 
+  words, 
+  onWordsChange, 
+  selectedAlgorithm, 
+  onAlgorithmChange, 
+  axisLabels, 
+  onAxisLabelsChange,
+  textSize,
+  onTextSizeChange
+}) {
   const [isCollapsed, setIsCollapsed] = useState(false)
-  const [activeTab, setActiveTab] = useState('words') // 'words', 'settings', 'dimensions', or 'axisLabels'
+  const [activeTab, setActiveTab] = useState('words') // 'words', 'settings', 'dimensions', 'axisLabels', or 'appSettings'
   
   // Check if panel state was saved previously - run only once
   useEffect(() => {
@@ -103,6 +113,15 @@ function ControlPanel({ words, onWordsChange, selectedAlgorithm, onAlgorithmChan
           <FaKey size={20} />
           <span className="tab-label">API Key</span>
         </button>
+        <button 
+          className={`tab-button ${activeTab === 'appSettings' ? 'active' : ''}`}
+          onClick={() => changeTab('appSettings')}
+          aria-label="App Settings"
+          title="App Settings"
+        >
+          <FaCog size={20} />
+          <span className="tab-label">App Settings</span>
+        </button>
       </div>
       
       <div className="control-panel-content">
@@ -120,9 +139,13 @@ function ControlPanel({ words, onWordsChange, selectedAlgorithm, onAlgorithmChan
               <>
                 <FaTags /> Axis Labels
               </>
-            ) : (
+            ) : activeTab === 'settings' ? (
               <>
                 <FaKey /> API Settings
+              </>
+            ) : (
+              <>
+                <FaCog /> App Settings
               </>
             )}
           </h3>
@@ -171,6 +194,15 @@ function ControlPanel({ words, onWordsChange, selectedAlgorithm, onAlgorithmChan
         {activeTab === 'settings' && (
           <div className="tab-content">
             <ApiKeyManager />
+          </div>
+        )}
+        
+        {activeTab === 'appSettings' && (
+          <div className="tab-content">
+            <SettingsManager
+              textSize={textSize}
+              onTextSizeChange={onTextSizeChange}
+            />
           </div>
         )}
       </div>

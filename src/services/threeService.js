@@ -109,22 +109,26 @@ export const getControls = (camera, domElement) => {
  * @param {string} text - The text to display
  * @param {THREE.Vector3} position - Position in 3D space
  * @param {string} color - CSS color string
+ * @param {number} [textSize=1] - Text size multiplier
  * @returns {THREE.Sprite} The text sprite
  */
-export const createTextSprite = (text, position, color = '#ffffff') => {
+export const createTextSprite = (text, position, color = '#ffffff', textSize = 1) => {
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d');
   canvas.width = 128;
   canvas.height = 32;
   context.fillStyle = color;
-  context.font = '24px Arial';
-  context.fillText(text, 4, 24);
+  // Apply text size to the font
+  const fontSize = Math.round(24 * textSize);
+  context.font = `${fontSize}px Arial`;
+  context.fillText(text, 4, Math.min(24, fontSize));
   
   const texture = new THREE.CanvasTexture(canvas);
   const material = new THREE.SpriteMaterial({ map: texture });
   const sprite = new THREE.Sprite(material);
   sprite.position.copy(position);
-  sprite.scale.set(0.5, 0.125, 1);
+  // Scale the sprite based on text size
+  sprite.scale.set(0.5 * textSize, 0.125 * textSize, 1);
   
   return sprite;
 };
@@ -134,16 +138,17 @@ export const createTextSprite = (text, position, color = '#ffffff') => {
  * 
  * @param {THREE.Scene} scene - The scene to set up
  * @param {Object} axisLabels - Optional custom labels for axes {x, y, z}
+ * @param {number} [textSize=1] - Text size multiplier
  */
-export const setupBasicScene = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' }) => {
+export const setupBasicScene = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' }, textSize = 1) => {
   // Add coordinate axes
   const axesHelper = new THREE.AxesHelper(2);
   scene.add(axesHelper);
   
   // Add axis labels - store in scene.userData for later reference
-  const xLabel = createTextSprite(axisLabels.x, new THREE.Vector3(2.2, 0, 0), '#ff5555');
-  const yLabel = createTextSprite(axisLabels.y, new THREE.Vector3(0, 2.2, 0), '#55ff55');
-  const zLabel = createTextSprite(axisLabels.z, new THREE.Vector3(0, 0, 2.2), '#5555ff');
+  const xLabel = createTextSprite(axisLabels.x, new THREE.Vector3(2.2, 0, 0), '#ff5555', textSize);
+  const yLabel = createTextSprite(axisLabels.y, new THREE.Vector3(0, 2.2, 0), '#55ff55', textSize);
+  const zLabel = createTextSprite(axisLabels.z, new THREE.Vector3(0, 0, 2.2), '#5555ff', textSize);
   
   scene.add(xLabel);
   scene.add(yLabel);
@@ -151,6 +156,7 @@ export const setupBasicScene = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' }) 
   
   // Store references to labels in scene.userData for later updates
   scene.userData.axisLabels = { x: xLabel, y: yLabel, z: zLabel };
+  scene.userData.textSize = textSize; // Store text size for later reference
   
   // Add grid helper
   const gridHelper = new THREE.GridHelper(4, 10, 0x555555, 0x333333);
@@ -170,12 +176,16 @@ export const setupBasicScene = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' }) 
  * 
  * @param {THREE.Scene} scene - The scene containing the axis labels
  * @param {Object} axisLabels - Custom labels for axes {x, y, z}
+ * @param {number} [textSize] - Text size multiplier. If not provided, uses the stored value or default 1
  * @returns {boolean} True if update was successful
  */
-export const updateAxisLabels = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' }) => {
+export const updateAxisLabels = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' }, textSize) => {
   if (!scene || !scene.userData.axisLabels) {
     return false;
   }
+  
+  // Use stored text size if not provided
+  const fontSize = textSize !== undefined ? textSize : (scene.userData.textSize || 1);
   
   // Get the stored label sprites
   const { x: xLabel, y: yLabel, z: zLabel } = scene.userData.axisLabels;
@@ -186,9 +196,9 @@ export const updateAxisLabels = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' })
   scene.remove(zLabel);
   
   // Create and add new sprites
-  const newXLabel = createTextSprite(axisLabels.x, new THREE.Vector3(2.2, 0, 0), '#ff5555');
-  const newYLabel = createTextSprite(axisLabels.y, new THREE.Vector3(0, 2.2, 0), '#55ff55');
-  const newZLabel = createTextSprite(axisLabels.z, new THREE.Vector3(0, 0, 2.2), '#5555ff');
+  const newXLabel = createTextSprite(axisLabels.x, new THREE.Vector3(2.2, 0, 0), '#ff5555', fontSize);
+  const newYLabel = createTextSprite(axisLabels.y, new THREE.Vector3(0, 2.2, 0), '#55ff55', fontSize);
+  const newZLabel = createTextSprite(axisLabels.z, new THREE.Vector3(0, 0, 2.2), '#5555ff', fontSize);
   
   scene.add(newXLabel);
   scene.add(newYLabel);
@@ -196,6 +206,7 @@ export const updateAxisLabels = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' })
   
   // Update the references in scene.userData
   scene.userData.axisLabels = { x: newXLabel, y: newYLabel, z: newZLabel };
+  scene.userData.textSize = fontSize; // Store updated text size
   
   return true;
 };

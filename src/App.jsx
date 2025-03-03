@@ -7,6 +7,7 @@ function App() {
   const [words, setWords] = useState([])
   const [algorithm, setAlgorithm] = useState('pca')
   const [axisLabels, setAxisLabels] = useState({ x: "X", y: "Y", z: "Z" })
+  const [textSize, setTextSize] = useState(1)
   const visualizerRef = useRef(null)
 
   const handleWordsChange = useCallback((newWords) => {
@@ -25,7 +26,12 @@ function App() {
     localStorage.setItem('axis-labels', JSON.stringify(newLabels))
   }, [])
   
-  // Load saved algorithm choice and axis labels when component mounts
+  const handleTextSizeChange = useCallback((newSize) => {
+    setTextSize(newSize)
+    // The actual saving is done in the SettingsManager component
+  }, [])
+  
+  // Load saved algorithm choice, axis labels, and text size when component mounts
   useEffect(() => {
     const savedAlgorithm = localStorage.getItem('selected-dimension-algorithm')
     if (savedAlgorithm) {
@@ -39,6 +45,19 @@ function App() {
         setAxisLabels(parsedLabels)
       } catch (error) {
         console.error('Failed to parse saved axis labels:', error)
+      }
+    }
+    
+    // Load saved text size
+    const savedTextSize = localStorage.getItem('app-text-size')
+    if (savedTextSize) {
+      try {
+        const parsedSize = parseFloat(savedTextSize)
+        if (!isNaN(parsedSize)) {
+          setTextSize(parsedSize)
+        }
+      } catch (error) {
+        console.error('Failed to parse saved text size:', error)
       }
     }
   }, [])
@@ -61,12 +80,15 @@ function App() {
         onAlgorithmChange={handleAlgorithmChange}
         axisLabels={axisLabels}
         onAxisLabelsChange={handleAxisLabelsChange}
+        textSize={textSize}
+        onTextSizeChange={handleTextSizeChange}
       />
       <EmbeddingVisualizer 
         words={words} 
         onFocusChanged={handleVisualizerRef}
         algorithmId={algorithm}
         axisLabels={axisLabels}
+        textSize={textSize}
       />
     </div>
   )

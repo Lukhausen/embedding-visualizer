@@ -1,0 +1,105 @@
+.settings-container {
+  padding: 1rem;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.settings-group {
+  background-color: rgba(30, 30, 30, 0.5);
+  border-radius: 4px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.settings-section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0;
+  margin-bottom: 1rem;
+  font-size: 1.1rem;
+  color: #ddd;
+  font-weight: 500;
+}
+
+.settings-item {
+  margin-bottom: 1.5rem;
+}
+
+.settings-item label {
+  display: block;
+  font-size: 0.9rem;
+  color: #aaa;
+  margin-bottom: 0.5rem;
+}
+
+.settings-control {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.settings-slider {
+  flex: 1;
+  -webkit-appearance: none;
+  height: 6px;
+  border-radius: 3px;
+  background: #444;
+  outline: none;
+}
+
+.settings-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #3a82f7;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.settings-slider::-webkit-slider-thumb:hover {
+  background: #4d8ef8;
+  box-shadow: 0 0 0 6px rgba(77, 142, 248, 0.2);
+}
+
+.settings-value {
+  font-size: 0.9rem;
+  color: #ddd;
+  min-width: 40px;
+  text-align: center;
+}
+
+.settings-description {
+  font-size: 0.8rem;
+  color: #888;
+  margin-top: 0.5rem;
+}
+
+/* Light theme styles */
+@media (prefers-color-scheme: light) {
+  .settings-group {
+    background-color: rgba(240, 240, 240, 0.7);
+  }
+  
+  .settings-section-title {
+    color: #333;
+  }
+  
+  .settings-item label {
+    color: #666;
+  }
+  
+  .settings-slider {
+    background: #ccc;
+  }
+  
+  .settings-value {
+    color: #333;
+  }
+  
+  .settings-description {
+    color: #777;
+  }
+} 

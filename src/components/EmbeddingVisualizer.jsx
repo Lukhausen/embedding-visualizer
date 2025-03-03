@@ -19,7 +19,13 @@ import {
   getDimensionInfo
 } from '../services/dimensionReduction'
 
-const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged, algorithmId = 'pca', axisLabels = { x: "X", y: "Y", z: "Z" } }, ref) => {
+const EmbeddingVisualizer = forwardRef(({ 
+  words = [], 
+  onFocusChanged, 
+  algorithmId = 'pca', 
+  axisLabels = { x: "X", y: "Y", z: "Z" },
+  textSize = 1
+}, ref) => {
   const containerRef = useRef(null)
   const sceneRef = useRef(null)
   const cameraRef = useRef(null)
@@ -29,6 +35,12 @@ const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged, algorithmI
   const stopAnimationRef = useRef(null)
   const [dimensionReduction, setDimensionReduction] = useState(null)
   const [dimensionInfo, setDimensionInfo] = useState(null)
+  // Store disposable resources
+  const disposablesRef = useRef({
+    geometries: [],
+    materials: [],
+    textures: []
+  });
   
   // Expose methods to parent components
   useImperativeHandle(ref, () => ({
@@ -80,10 +92,10 @@ const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged, algorithmI
     
     // Set up the scene if it hasn't been set up yet (first load)
     if (scene.children.length === 0) {
-      setupBasicScene(scene, axisLabels)
+      setupBasicScene(scene, axisLabels, textSize)
     } else {
       // If the scene already exists, update the axis labels
-      updateAxisLabels(scene, axisLabels)
+      updateAxisLabels(scene, axisLabels, textSize)
     }
 
     // Handle window resize
@@ -225,17 +237,70 @@ const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged, algorithmI
     }
   }, [words, algorithmId])
 
-  // Update points when dimension reduction changes
+  // Regenerate points when embeddings change
   useEffect(() => {
+    // Skip if no scene or no dimension reduction
     if (!sceneRef.current || !dimensionReduction) return
     
-    // Store all created geometries, materials, and textures for proper disposal
-    const disposables = {
-      geometries: [],
-      materials: [],
-      textures: []
-    }
+    // Clear any existing points
+    clearPoints()
+    
+    // Get the word objects with embeddings
+    const { wordObjects } = dimensionReduction
+    
+    // Add points for each word with an embedding
+    wordObjects.forEach((wordObj) => {
+      // Get 3D coordinates for this embedding
+      const coordinates = getCoordinatesFromEmbedding(wordObj.embedding, dimensionReduction)
+      addPointWithLabel(wordObj.text, coordinates, wordObj.embedding)
+    })
+    
+    // Handle words without embeddings
+    handleWordsWithoutEmbeddings(wordObjects)
+    
+  }, [dimensionReduction, words, textSize]) // Re-run when textSize changes
 
+  // Update axis labels when they change
+  useEffect(() => {
+    if (!sceneRef.current) return
+    
+    updateAxisLabels(sceneRef.current, axisLabels, textSize)
+  }, [axisLabels, textSize]);
+
+  // Helper function to create word labels with adjustable size
+  const createWordLabel = (text, position, color, textSizeMultiplier) => {
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d')
+    canvas.width = 256
+    canvas.height = 32
+    
+    const textColor = color.clone().multiplyScalar(1.5).getStyle()
+    context.fillStyle = textColor
+    // Apply text size scaling
+    const fontSize = Math.round(24 * textSizeMultiplier)
+    context.font = `${fontSize}px Arial`
+    context.fillText(text, 4, Math.min(24, fontSize))
+    
+    const texture = new THREE.CanvasTexture(canvas)
+    disposablesRef.current.textures.push(texture)
+    
+    const spriteMaterial = new THREE.SpriteMaterial({ 
+      map: texture,
+      transparent: true 
+    })
+    disposablesRef.current.materials.push(spriteMaterial)
+    
+    const label = new THREE.Sprite(spriteMaterial)
+    label.position.copy(position)
+    label.position.y += 0.1
+    // Scale the sprite based on text size
+    label.scale.set(0.5 * textSizeMultiplier, 0.0625 * textSizeMultiplier, 1)
+
+    return label
+  }
+
+  // Clear all points from the scene
+  const clearPoints = () => {
     // Remove old points
     Object.values(pointsRef.current).forEach(point => {
       if (point.mesh) {
@@ -258,69 +323,53 @@ const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged, algorithmI
       }
     })
     pointsRef.current = {}
-
-    const { wordObjects } = dimensionReduction
     
-    // Add points for each word
-    wordObjects.forEach((wordObj) => {
-      // Get 3D coordinates for this embedding
-      const coordinates = getCoordinatesFromEmbedding(wordObj.embedding, dimensionReduction)
-      const position = new THREE.Vector3(coordinates.x, coordinates.y, coordinates.z)
+    // Reset disposables
+    disposablesRef.current = {
+      geometries: [],
+      materials: [],
+      textures: []
+    };
+  }
 
-      // Create point with color based on position
-      const geometry = new THREE.SphereGeometry(0.05, 32, 32)
-      disposables.geometries.push(geometry)
-      
-      // Generate a color based on position to help differentiate points
-      const hue = (position.x + 2) / 4
-      const saturation = 0.7 + (position.y + 2) / 16
-      const lightness = 0.5 + (position.z + 2) / 16
-      const color = new THREE.Color().setHSL(hue, saturation, lightness)
-      
-      const material = new THREE.MeshStandardMaterial({ 
-        color: color,
-        emissive: color.clone().multiplyScalar(0.3),
-        metalness: 0.3,
-        roughness: 0.7
-      })
-      disposables.materials.push(material)
-      
-      const mesh = new THREE.Mesh(geometry, material)
-      mesh.position.copy(position)
+  // Add a point with label to the scene
+  const addPointWithLabel = (text, coordinates, embedding) => {
+    const position = new THREE.Vector3(coordinates.x, coordinates.y, coordinates.z)
 
-      // Create label
-      const canvas = document.createElement('canvas')
-      const context = canvas.getContext('2d')
-      canvas.width = 256
-      canvas.height = 32
-      
-      const textColor = color.clone().multiplyScalar(1.5).getStyle()
-      context.fillStyle = textColor
-      context.font = '24px Arial'
-      context.fillText(wordObj.text, 4, 24)
-      
-      const texture = new THREE.CanvasTexture(canvas)
-      disposables.textures.push(texture)
-      
-      const spriteMaterial = new THREE.SpriteMaterial({ 
-        map: texture,
-        transparent: true 
-      })
-      disposables.materials.push(spriteMaterial)
-      
-      const label = new THREE.Sprite(spriteMaterial)
-      label.position.copy(position)
-      label.position.y += 0.1
-      label.scale.set(0.5, 0.0625, 1)
-
-      sceneRef.current.add(mesh)
-      sceneRef.current.add(label)
-
-      pointsRef.current[wordObj.text] = { mesh, label }
+    // Create point with color based on position
+    const geometry = new THREE.SphereGeometry(0.05, 32, 32)
+    disposablesRef.current.geometries.push(geometry)
+    
+    // Generate a color based on position to help differentiate points
+    const hue = (position.x + 2) / 4
+    const saturation = 0.7 + (position.y + 2) / 16
+    const lightness = 0.5 + (position.z + 2) / 16
+    const color = new THREE.Color().setHSL(hue, saturation, lightness)
+    
+    const material = new THREE.MeshStandardMaterial({ 
+      color: color,
+      emissive: color.clone().multiplyScalar(0.3),
+      metalness: 0.3,
+      roughness: 0.7
     })
+    disposablesRef.current.materials.push(material)
+    
+    const mesh = new THREE.Mesh(geometry, material)
+    mesh.position.copy(position)
 
+    // Create label
+    const label = createWordLabel(text, position, color, textSize)
+
+    sceneRef.current.add(mesh)
+    sceneRef.current.add(label)
+
+    pointsRef.current[text] = { mesh, label }
+  }
+
+  // Handle words without embeddings
+  const handleWordsWithoutEmbeddings = (wordObjectsWithEmbeddings) => {
     // If we have no embeddings but have words, add default positions for words without embeddings
-    if (wordObjects.length === 0 && words.length > 0) {
+    if (wordObjectsWithEmbeddings.length === 0 && words.length > 0) {
       words.forEach((word) => {
         // Create random positions for words without embeddings
         const position = new THREE.Vector3(
@@ -331,7 +380,7 @@ const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged, algorithmI
 
         // Create point with color based on position
         const geometry = new THREE.SphereGeometry(0.05, 32, 32)
-        disposables.geometries.push(geometry)
+        disposablesRef.current.geometries.push(geometry)
         
         const hue = (position.x + 1.5) / 3 * 0.33 + (position.z + 1.5) / 3 * 0.67
         const color = new THREE.Color().setHSL(hue, 0.8, 0.6)
@@ -342,35 +391,13 @@ const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged, algorithmI
           metalness: 0.3,
           roughness: 0.7
         })
-        disposables.materials.push(material)
+        disposablesRef.current.materials.push(material)
         
         const mesh = new THREE.Mesh(geometry, material)
         mesh.position.copy(position)
 
         // Create label
-        const canvas = document.createElement('canvas')
-        const context = canvas.getContext('2d')
-        canvas.width = 256
-        canvas.height = 32
-        
-        const textColor = color.clone().multiplyScalar(1.5).getStyle()
-        context.fillStyle = textColor
-        context.font = '24px Arial'
-        context.fillText(word, 4, 24)
-        
-        const texture = new THREE.CanvasTexture(canvas)
-        disposables.textures.push(texture)
-        
-        const spriteMaterial = new THREE.SpriteMaterial({ 
-          map: texture,
-          transparent: true 
-        })
-        disposables.materials.push(spriteMaterial)
-        
-        const label = new THREE.Sprite(spriteMaterial)
-        label.position.copy(position)
-        label.position.y += 0.1
-        label.scale.set(0.5, 0.0625, 1)
+        const label = createWordLabel(word, position, color, textSize)
 
         sceneRef.current.add(mesh)
         sceneRef.current.add(label)
@@ -378,29 +405,7 @@ const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged, algorithmI
         pointsRef.current[word] = { mesh, label }
       })
     }
-    
-    // Setup disposal for HMR
-    if (import.meta.hot) {
-      import.meta.hot.dispose(() => {
-        disposeResources(disposables)
-        
-        // Clear points from scene if it still exists
-        if (sceneRef.current) {
-          Object.values(pointsRef.current).forEach(point => {
-            if (point.mesh) sceneRef.current.remove(point.mesh)
-            if (point.label) sceneRef.current.remove(point.label)
-          })
-        }
-      })
-    }
-    
-    return () => {
-      // Only clean up if not handling HMR
-      if (!import.meta.hot) {
-        disposeResources(disposables)
-      }
-    }
-  }, [dimensionReduction, words])
+  }
 
   return (
     <div className="embedding-visualizer" ref={containerRef}>

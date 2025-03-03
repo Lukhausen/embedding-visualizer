@@ -26,7 +26,9 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
   const [findingBestLabels, setFindingBestLabels] = useState(false);
   const [findingProgress, setFindingProgress] = useState(0);
   const [totalSuggestions, setTotalSuggestions] = useState(0);
+  const [suggestionsProgress, setSuggestionsProgress] = useState(0);
   const [selectedEmbedding, setSelectedEmbedding] = useState(null);
+  const [outputsPerPrompt, setOutputsPerPrompt] = useState(30);
 
   // Apply default labels on first render if none provided
   useEffect(() => {
@@ -45,7 +47,7 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
     }
   };
 
-  const fetchSuggestions = async (wordList, formattedWordList, apiKey, existingSuggestions = []) => {
+  const fetchSuggestions = async (wordList, formattedWordList, apiKey, existingSuggestions = [], outputCount = 10) => {
     // Create OpenAI client
     const OpenAI = (await import('openai')).default;
     const openai = new OpenAI({
@@ -62,7 +64,7 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
           "content": [
             {
               "type": "text",
-              "text": `Your task is to find descriptive adjectives or characteristics that can describe the following words on a 3-dimensional coordinate system.\n\nWords to find characteristics for: ${formattedWordList}\n\nThe idea is to plot those words in a 3d coordinate system using those characteristics. Generate diverse and unique characteristics that are different from these: ${existingSuggestions.join(', ')}.`
+              "text": `Your task is to find descriptive adjectives or characteristics that can describe the following words on a 3-dimensional coordinate system.\n\nWords to find characteristics for: ${formattedWordList}\n\nThe idea is to plot those words in a 3d coordinate system using those characteristics. Generate exactly ${outputCount} diverse and unique characteristics that are different from these: ${existingSuggestions.join(', ')}.`
             }
           ]
         },
@@ -152,8 +154,10 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
       presence_penalty: 0
     });
 
-    // Log the response for debugging
-    console.log(`Iteration ${currentIteration + 1} response:`, response);
+    // Log the response for debugging - only in development mode
+    if (process.env.NODE_ENV === 'development' && false) { // Disabled by default
+      console.log(`Iteration ${currentIteration + 1} response:`, response);
+    }
     
     // Extract suggestions from response
     if (response.choices && response.choices[0] && response.choices[0].message && response.choices[0].message.tool_calls) {
@@ -195,6 +199,9 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
     try {
       setLoadingSuggestions(true);
       setCurrentIteration(0);
+      setSuggestionsProgress(0);
+      // Set the total number of suggestion requests
+      setTotalSuggestions(iterationCount);
       
       // Parse words from localStorage
       const parsedWords = JSON.parse(savedWords);
@@ -204,15 +211,54 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
       // Initialize accumulated suggestions
       let allSuggestions = [];
       
-      // Run multiple iterations
-      for (let i = 0; i < iterationCount; i++) {
-        setCurrentIteration(i);
-        
-        // Fetch new suggestions, passing existing ones to avoid duplicates
-        const newSuggestions = await fetchSuggestions(wordList, formattedWordList, apiKey, allSuggestions);
-        
-        // Add new unique suggestions to the accumulated list
-        if (newSuggestions.length > 0) {
+      // Create a single toast ID for tracking progress
+      const toastId = toast.info(`Getting suggestions (0/${iterationCount} requests completed)...`, {
+        autoClose: false,
+        closeButton: false
+      });
+      
+      // Create an array of promises for concurrent execution
+      const requestPromises = Array.from({ length: iterationCount }, async (_, i) => {
+        try {
+          // Each request gets its own copy of the current accumulated suggestions
+          // to avoid duplicates across concurrent requests
+          const newSuggestions = await fetchSuggestions(
+            wordList, 
+            formattedWordList, 
+            apiKey, 
+            [...allSuggestions], // Pass a copy to prevent race conditions
+            outputsPerPrompt
+          );
+          
+          // Update progress
+          const newProgress = ((i + 1) / iterationCount) * 100;
+          setSuggestionsProgress(newProgress);
+          setCurrentIteration(i + 1);
+          
+          // Update the progress toast
+          toast.update(toastId, {
+            render: `Getting suggestions (${i + 1}/${iterationCount} requests completed)...`
+          });
+          
+          return newSuggestions;
+        } catch (error) {
+          console.error(`Error in request ${i + 1}:`, error);
+          // Still update progress even on error
+          const newProgress = ((i + 1) / iterationCount) * 100;
+          setSuggestionsProgress(newProgress);
+          setCurrentIteration(i + 1);
+          return [];
+        }
+      });
+
+      // Wait for all requests to complete concurrently
+      const allResults = await Promise.all(requestPromises);
+      
+      // Process all results and combine unique suggestions
+      let totalNewSuggestions = 0;
+      
+      allResults.forEach((newSuggestions) => {
+        if (newSuggestions && newSuggestions.length > 0) {
           // Filter out duplicates (case-insensitive)
           const uniqueNewSuggestions = newSuggestions.filter(
             suggestion => !allSuggestions.some(
@@ -221,17 +267,21 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
           );
           
           allSuggestions = [...allSuggestions, ...uniqueNewSuggestions];
-          
-          // Update the UI with accumulated suggestions after each iteration
-          setSuggestions(allSuggestions);
-          setSuggestionsWithEmbeddings(allSuggestions.map(text => ({ text, embedding: null })));
-          
-          toast.info(`Iteration ${i + 1}/${iterationCount}: Added ${uniqueNewSuggestions.length} new suggestions`);
+          totalNewSuggestions += uniqueNewSuggestions.length;
         }
-      }
+      });
+
+      // Update the UI with all accumulated suggestions
+      setSuggestions(allSuggestions);
+      setSuggestionsWithEmbeddings(allSuggestions.map(text => ({ text, embedding: null })));
       
       // Final update with total count
-      toast.success(`Completed ${iterationCount} iterations. Got ${allSuggestions.length} unique axis label suggestions!`);
+      toast.update(toastId, {
+        render: `Found ${allSuggestions.length} unique axis label suggestions!`,
+        type: 'success',
+        autoClose: 3000,
+        closeButton: true
+      });
       
     } catch (error) {
       console.error('Error getting suggestions:', error);
@@ -239,6 +289,8 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
     } finally {
       setLoadingSuggestions(false);
       setCurrentIteration(0);
+      setSuggestionsProgress(0);
+      setTotalSuggestions(0);
     }
   };
 
@@ -436,60 +488,78 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
       </div>
       
       <div className="axis-label-inputs">
-        <div className="axis-label-row">
-          <div className="axis-label-group">
-            <label htmlFor="x-axis-label">X:</label>
-            <input
-              id="x-axis-label"
-              type="text"
-              value={labels.x}
-              onChange={(e) => handleLabelChange('x', e.target.value)}
-              placeholder="X-Axis"
-              className="axis-label-input"
-            />
-          </div>
-          
-          <div className="axis-label-group">
-            <label htmlFor="y-axis-label">Y:</label>
-            <input
-              id="y-axis-label"
-              type="text"
-              value={labels.y}
-              onChange={(e) => handleLabelChange('y', e.target.value)}
-              placeholder="Y-Axis"
-              className="axis-label-input"
-            />
-          </div>
-          
-          <div className="axis-label-group">
-            <label htmlFor="z-axis-label">Z:</label>
-            <input
-              id="z-axis-label"
-              type="text"
-              value={labels.z}
-              onChange={(e) => handleLabelChange('z', e.target.value)}
-              placeholder="Z-Axis"
-              className="axis-label-input"
-            />
-          </div>
+        <div className="axis-label-group">
+          <label htmlFor="x-axis-label">X:</label>
+          <input
+            id="x-axis-label"
+            type="text"
+            value={labels.x}
+            onChange={(e) => handleLabelChange('x', e.target.value)}
+            placeholder="X-Axis"
+            className="axis-label-input"
+          />
+        </div>
+        
+        <div className="axis-label-group">
+          <label htmlFor="y-axis-label">Y:</label>
+          <input
+            id="y-axis-label"
+            type="text"
+            value={labels.y}
+            onChange={(e) => handleLabelChange('y', e.target.value)}
+            placeholder="Y-Axis"
+            className="axis-label-input"
+          />
+        </div>
+        
+        <div className="axis-label-group">
+          <label htmlFor="z-axis-label">Z:</label>
+          <input
+            id="z-axis-label"
+            type="text"
+            value={labels.z}
+            onChange={(e) => handleLabelChange('z', e.target.value)}
+            placeholder="Z-Axis"
+            className="axis-label-input"
+          />
         </div>
       </div>
       
       <div className="suggestions-section">
         <div className="iteration-controls">
-          <label htmlFor="iteration-slider">
-            Number of AI requests: <span className="iteration-value">{iterationCount}</span>
-          </label>
-          <input
-            id="iteration-slider"
-            type="range"
-            min="1"
-            max="5"
-            value={iterationCount}
-            onChange={(e) => setIterationCount(parseInt(e.target.value))}
-            className="iteration-slider"
-            disabled={loadingSuggestions || findingBestLabels}
-          />
+          <div className="iteration-row">
+            <div className="iteration-group">
+              <label htmlFor="iteration-slider">
+                Number of AI requests: <span className="iteration-value">{iterationCount}</span>
+              </label>
+              <input
+                id="iteration-slider"
+                type="range"
+                min="1"
+                max="20"
+                value={iterationCount}
+                onChange={(e) => setIterationCount(parseInt(e.target.value))}
+                className="iteration-slider"
+                disabled={loadingSuggestions || findingBestLabels}
+              />
+            </div>
+            
+            <div className="iteration-group">
+              <label htmlFor="outputs-per-prompt">
+                Outputs per prompt:
+              </label>
+              <input
+                id="outputs-per-prompt"
+                type="number"
+                min="1"
+                value={outputsPerPrompt}
+                onChange={(e) => setOutputsPerPrompt(parseInt(e.target.value))}
+                className="outputs-input"
+                disabled={loadingSuggestions || findingBestLabels}
+              />
+            </div>
+          </div>
+          
           <div className="iteration-description">
             More requests = more diverse suggestions (but takes longer)
           </div>
@@ -502,7 +572,7 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
             disabled={loadingSuggestions || findingBestLabels}
           >
             {loadingSuggestions 
-              ? `Getting Suggestions... (${currentIteration + 1}/${iterationCount})` 
+              ? `Processing Suggestions... (${currentIteration}/${totalSuggestions})` 
               : `Get AI Suggestions (${iterationCount} ${iterationCount === 1 ? 'request' : 'requests'})`
             }
           </button>
@@ -525,15 +595,24 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
           <>
             <div className="progress-bar-container">
               <div 
-                className="progress-bar" 
+                className={`progress-bar ${findingBestLabels || loadingSuggestions ? '' : 'pulsing-progress'}`} 
                 style={{ 
-                  width: `${findingBestLabels ? findingProgress : ((currentIteration + 0.5) / iterationCount) * 100}%` 
+                  width: findingBestLabels 
+                    ? `${findingProgress}%` 
+                    : loadingSuggestions
+                      ? `${suggestionsProgress}%`
+                      : undefined 
                 }}
               ></div>
             </div>
             {findingBestLabels && (
               <div className="progress-status">
                 Processing embeddings: {Math.floor(findingProgress / 100 * totalSuggestions)} of {totalSuggestions} requests completed
+              </div>
+            )}
+            {loadingSuggestions && !findingBestLabels && (
+              <div className="progress-status">
+                Processing suggestions: {currentIteration} of {totalSuggestions} requests completed
               </div>
             )}
           </>
