@@ -35,12 +35,12 @@
 
 .settings-control {
   display: flex;
-  align-items: center;
-  gap: 1rem;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
 .settings-slider {
-  flex: 1;
+  width: 100%;
   -webkit-appearance: none;
   height: 6px;
   border-radius: 3px;
@@ -67,8 +67,7 @@
 .settings-value {
   font-size: 0.9rem;
   color: #ddd;
-  min-width: 40px;
-  text-align: center;
+  text-align: left;
 }
 
 .settings-description {

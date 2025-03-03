@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
-import { FaTable } from 'react-icons/fa';
+import { FaTable, FaTags, FaRobot, FaList, FaLayerGroup, FaSearch } from 'react-icons/fa';
 import { getEmbedding } from '../services/openaiService';
 import { getDimensionInfo } from '../services/dimensionReduction';
 import EmbeddingViewer from './EmbeddingViewer';
@@ -29,6 +29,7 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
   const [suggestionsProgress, setSuggestionsProgress] = useState(0);
   const [selectedEmbedding, setSelectedEmbedding] = useState(null);
   const [outputsPerPrompt, setOutputsPerPrompt] = useState(30);
+  const [labelsPerAxis, setLabelsPerAxis] = useState(1);
 
   // Apply default labels on first render if none provided
   useEffect(() => {
@@ -39,13 +40,23 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
     }
   }, [axisLabels]);
 
+  // Handle changes to axis labels
   const handleLabelChange = (axis, value) => {
     const newLabels = { ...labels, [axis]: value };
     setLabels(newLabels);
+    
+    // Notify parent component of the change
     if (onAxisLabelsChange) {
-      onAxisLabelsChange(newLabels);
+      onAxisLabelsChange(newLabels, labelsPerAxis);
     }
   };
+
+  // Update parent whenever labelsPerAxis changes
+  useEffect(() => {
+    if (onAxisLabelsChange) {
+      onAxisLabelsChange(labels, labelsPerAxis);
+    }
+  }, [labelsPerAxis, onAxisLabelsChange, labels]);
 
   const fetchSuggestions = async (wordList, formattedWordList, apiKey, existingSuggestions = [], outputCount = 10) => {
     // Create OpenAI client
@@ -484,7 +495,7 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
   return (
     <div className="axis-labels-container">
       <div className="axis-label-description">
-        <p>Customize the labels for each dimension axis in the 3D visualization.</p>
+        <p>Name each axis in your 3D visualization.</p>
       </div>
       
       <div className="axis-label-inputs">
@@ -525,12 +536,32 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
         </div>
       </div>
       
+      <div className="labels-per-axis-control">
+        <div className="control-description">
+          <p>Show multiple words per axis.</p>
+        </div>
+        <div className="control-row">
+          <label htmlFor="labels-per-axis-slider">
+            Words per axis: <span className="labels-per-axis-value">{labelsPerAxis}</span>
+          </label>
+          <input
+            id="labels-per-axis-slider"
+            type="range"
+            min="1"
+            max="5"
+            value={labelsPerAxis}
+            onChange={(e) => setLabelsPerAxis(parseInt(e.target.value))}
+            className="iteration-slider"
+          />
+        </div>
+      </div>
+      
       <div className="suggestions-section">
         <div className="iteration-controls">
           <div className="iteration-row">
             <div className="iteration-group">
               <label htmlFor="iteration-slider">
-                Number of AI requests: <span className="iteration-value">{iterationCount}</span>
+                AI requests: <span className="iteration-value">{iterationCount}</span>
               </label>
               <input
                 id="iteration-slider"
@@ -546,7 +577,7 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
             
             <div className="iteration-group">
               <label htmlFor="outputs-per-prompt">
-                Outputs per prompt:
+                Results per request:
               </label>
               <input
                 id="outputs-per-prompt"
@@ -561,7 +592,7 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
           </div>
           
           <div className="iteration-description">
-            More requests = more diverse suggestions (but takes longer)
+            More requests = more variety (but slower)
           </div>
         </div>
         
@@ -569,26 +600,18 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
           <button 
             className="get-suggestions-button"
             onClick={getWordSuggestions}
-            disabled={loadingSuggestions || findingBestLabels}
+            disabled={loadingSuggestions || findingBestLabels || words.length === 0}
           >
-            {loadingSuggestions 
-              ? `Processing Suggestions... (${currentIteration}/${totalSuggestions})` 
-              : `Get AI Suggestions (${iterationCount} ${iterationCount === 1 ? 'request' : 'requests'})`
-            }
+            {loadingSuggestions ? 'Generating...' : 'Get Axis Label Ideas'}
           </button>
           
-          {suggestions.length > 0 && (
-            <button 
-              className="find-best-labels-button"
-              onClick={findBestLabels}
-              disabled={loadingSuggestions || findingBestLabels}
-            >
-              {findingBestLabels 
-                ? `Finding Best Labels... (${Math.floor(findingProgress / 100 * totalSuggestions)}/${totalSuggestions})` 
-                : 'Find Best Labels'
-              }
-            </button>
-          )}
+          <button
+            className="find-best-labels-button"
+            onClick={findBestLabels}
+            disabled={loadingSuggestions || findingBestLabels || suggestions.length === 0}
+          >
+            {findingBestLabels ? 'Finding Best Labels...' : 'Find Best Matches'}
+          </button>
         </div>
         
         {(loadingSuggestions || findingBestLabels) && (
@@ -607,12 +630,12 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
             </div>
             {findingBestLabels && (
               <div className="progress-status">
-                Processing embeddings: {Math.floor(findingProgress / 100 * totalSuggestions)} of {totalSuggestions} requests completed
+                Analyzing: {Math.floor(findingProgress / 100 * totalSuggestions)} of {totalSuggestions}
               </div>
             )}
             {loadingSuggestions && !findingBestLabels && (
               <div className="progress-status">
-                Processing suggestions: {currentIteration} of {totalSuggestions} requests completed
+                Generating: {currentIteration} of {totalSuggestions}
               </div>
             )}
           </>
@@ -620,7 +643,7 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
         
         {suggestions.length > 0 && (
           <div className="suggestions-list">
-            <h4>Suggested Axis Labels: <span className="suggestion-count">({suggestions.length})</span></h4>
+            <h4>Label Ideas <span className="suggestion-count">({suggestions.length})</span></h4>
             <div className="suggestion-controls">
               <button 
                 className="suggestion-control-button"
@@ -641,10 +664,10 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
                       className="suggestion-item"
                       onClick={() => {
                         // Show a menu to select which axis
-                        const axis = window.prompt(`Apply "${suggestion}" to which axis? (x, y, z)`, "x").toLowerCase();
+                        const axis = window.prompt(`Set "${suggestion}" as which axis? (x/y/z)`, "x").toLowerCase();
                         if (axis === 'x' || axis === 'y' || axis === 'z') {
                           handleLabelChange(axis, suggestion);
-                          toast.info(`Applied "${suggestion}" to ${axis.toUpperCase()}-axis`);
+                          toast.info(`Set "${suggestion}" as ${axis.toUpperCase()}-axis`);
                         }
                       }}
                     >
@@ -655,7 +678,7 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
                           e.stopPropagation(); // Prevent triggering the parent's onClick
                           showEmbedding(suggestion);
                         }}
-                        title="View embedding vector"
+                        title="View data vector"
                       >
                         <FaTable />
                       </button>

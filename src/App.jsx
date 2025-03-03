@@ -8,6 +8,7 @@ function App() {
   const [algorithm, setAlgorithm] = useState('pca')
   const [axisLabels, setAxisLabels] = useState({ x: "X", y: "Y", z: "Z" })
   const [textSize, setTextSize] = useState(1)
+  const [labelsPerAxis, setLabelsPerAxis] = useState(1)
   const visualizerRef = useRef(null)
 
   const handleWordsChange = useCallback((newWords) => {
@@ -20,10 +21,16 @@ function App() {
     localStorage.setItem('selected-dimension-algorithm', newAlgorithm)
   }, [])
   
-  const handleAxisLabelsChange = useCallback((newLabels) => {
+  const handleAxisLabelsChange = useCallback((newLabels, newLabelsPerAxis) => {
     setAxisLabels(newLabels)
+    if (newLabelsPerAxis) {
+      setLabelsPerAxis(newLabelsPerAxis)
+    }
     // Save the axis labels to localStorage
     localStorage.setItem('axis-labels', JSON.stringify(newLabels))
+    if (newLabelsPerAxis) {
+      localStorage.setItem('labels-per-axis', newLabelsPerAxis.toString())
+    }
   }, [])
   
   const handleTextSizeChange = useCallback((newSize) => {
@@ -60,6 +67,19 @@ function App() {
         console.error('Failed to parse saved text size:', error)
       }
     }
+    
+    // Load saved labels per axis setting
+    const savedLabelsPerAxis = localStorage.getItem('labels-per-axis')
+    if (savedLabelsPerAxis) {
+      try {
+        const parsedValue = parseInt(savedLabelsPerAxis)
+        if (!isNaN(parsedValue)) {
+          setLabelsPerAxis(parsedValue)
+        }
+      } catch (error) {
+        console.error('Failed to parse saved labels per axis:', error)
+      }
+    }
   }, [])
   
   /**
@@ -89,6 +109,7 @@ function App() {
         algorithmId={algorithm}
         axisLabels={axisLabels}
         textSize={textSize}
+        labelsPerAxis={labelsPerAxis}
       />
     </div>
   )

@@ -115,71 +115,118 @@ export const getControls = (camera, domElement) => {
 export const createTextSprite = (text, position, color = '#ffffff', textSize = 1) => {
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d');
-  canvas.width = 128;
-  canvas.height = 32;
+  
+  // Scale canvas based on text size with a more generous allocation for larger sizes
+  const baseWidth = 128;
+  const baseHeight = 32;
+  
+  // Use a non-linear scaling for very large text sizes to prevent excessive canvas sizes
+  const effectiveScale = textSize <= 2 ? textSize : 2 + (textSize - 2) * 0.7;
+  
+  canvas.width = Math.ceil(baseWidth * effectiveScale * (1 + text.length * 0.03));
+  canvas.height = Math.ceil(baseHeight * effectiveScale);
+  
   context.fillStyle = color;
   // Apply text size to the font
-  const fontSize = Math.round(24 * textSize);
+  const fontSize = Math.round(24 * effectiveScale);
   context.font = `${fontSize}px Arial`;
-  context.fillText(text, 4, Math.min(24, fontSize));
+  
+  // Clear canvas with transparent background
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  
+  // Calculate better text position to prevent cut-off
+  // Center text horizontally in the canvas
+  const textMetrics = context.measureText(text);
+  const textX = (canvas.width - textMetrics.width) / 2;
+  const textY = canvas.height / 2 + fontSize / 3;
+  context.fillText(text, textX, textY);
   
   const texture = new THREE.CanvasTexture(canvas);
-  const material = new THREE.SpriteMaterial({ map: texture });
+  const material = new THREE.SpriteMaterial({ 
+    map: texture,
+    transparent: true 
+  });
   const sprite = new THREE.Sprite(material);
   sprite.position.copy(position);
-  // Scale the sprite based on text size
-  sprite.scale.set(0.5 * textSize, 0.125 * textSize, 1);
+  
+  // Use the effective scale to maintain appropriate visible size
+  const widthRatio = effectiveScale * (1 + text.length * 0.03);
+  const heightRatio = effectiveScale;
+  sprite.scale.set(0.5 * widthRatio, 0.125 * heightRatio, 1);
   
   return sprite;
 };
 
 /**
- * Sets up a basic scene with coordinate axes, grid, and lighting
+ * Sets up a basic scene with axes, labels, grid and lighting
  * 
  * @param {THREE.Scene} scene - The scene to set up
- * @param {Object} axisLabels - Optional custom labels for axes {x, y, z}
- * @param {number} [textSize=1] - Text size multiplier
+ * @param {Object} axisLabels - Custom labels for axes {x, y, z}
+ * @param {number} textSize - Adjusts the size of text elements
+ * @param {number} labelsPerAxis - Number of labels to show per axis (default: 1)
+ * @returns {void}
  */
-export const setupBasicScene = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' }, textSize = 1) => {
-  // Add coordinate axes
+export const setupBasicScene = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' }, textSize = 1, labelsPerAxis = 1) => {
+  if (!scene) return;
+  
+  // Store the text size for later updates
+  scene.userData.textSize = textSize;
+  
+  // Create coordinate axes
   const axesHelper = new THREE.AxesHelper(2);
   scene.add(axesHelper);
-  
-  // Add axis labels - store in scene.userData for later reference
-  const xLabel = createTextSprite(axisLabels.x, new THREE.Vector3(2.2, 0, 0), '#ff5555', textSize);
-  const yLabel = createTextSprite(axisLabels.y, new THREE.Vector3(0, 2.2, 0), '#55ff55', textSize);
-  const zLabel = createTextSprite(axisLabels.z, new THREE.Vector3(0, 0, 2.2), '#5555ff', textSize);
-  
-  scene.add(xLabel);
-  scene.add(yLabel);
-  scene.add(zLabel);
-  
-  // Store references to labels in scene.userData for later updates
-  scene.userData.axisLabels = { x: xLabel, y: yLabel, z: zLabel };
-  scene.userData.textSize = textSize; // Store text size for later reference
   
   // Add grid helper
   const gridHelper = new THREE.GridHelper(4, 10, 0x555555, 0x333333);
   scene.add(gridHelper);
   
-  // Add lighting
+  // Add ambient light
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
   scene.add(ambientLight);
   
+  // Add directional light
   const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
   directionalLight.position.set(5, 5, 5);
   scene.add(directionalLight);
+  
+  // Position labels above the axis ends
+  const xLabelPos = new THREE.Vector3(2.2, 0.15, 0);
+  const yLabelPos = new THREE.Vector3(0, 2.2 + 0.15, 0);
+  const zLabelPos = new THREE.Vector3(0, 0.15, 2.2);
+  
+  // Create axis labels
+  const xLabel = createTextSprite(axisLabels.x, xLabelPos, '#ff5555', textSize);
+  const yLabel = createTextSprite(axisLabels.y, yLabelPos, '#55ff55', textSize);
+  const zLabel = createTextSprite(axisLabels.z, zLabelPos, '#5555ff', textSize);
+  
+  // Add labels to the scene
+  scene.add(xLabel);
+  scene.add(yLabel);
+  scene.add(zLabel);
+  
+  // Store the labels in scene userData for later updates
+  scene.userData.axisLabels = {
+    x: xLabel,
+    y: yLabel,
+    z: zLabel
+  };
+  
+  // Setup for additional labels
+  scene.userData.additionalLabels = [];
 };
 
 /**
- * Updates the axis labels in the scene with new custom labels
+ * Updates the axis labels in the scene
  * 
- * @param {THREE.Scene} scene - The scene containing the axis labels
- * @param {Object} axisLabels - Custom labels for axes {x, y, z}
- * @param {number} [textSize] - Text size multiplier. If not provided, uses the stored value or default 1
- * @returns {boolean} True if update was successful
+ * @param {THREE.Scene} scene - The Three.js scene
+ * @param {Object} axisLabels - Object containing labels for x, y, and z axes
+ * @param {Number} textSize - The size of the text
+ * @param {Number} labelsPerAxis - Number of labels to show per axis (default: 1)
+ * @param {Object} dimensionInfo - Information about the dimensions being displayed
+ * @param {Object} dimensionReduction - The dimension reduction result containing embeddings
+ * @returns {Boolean} - Whether the update was successful
  */
-export const updateAxisLabels = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' }, textSize) => {
+export const updateAxisLabels = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' }, textSize, labelsPerAxis = 1, dimensionInfo, dimensionReduction) => {
   if (!scene || !scene.userData.axisLabels) {
     return false;
   }
@@ -195,21 +242,111 @@ export const updateAxisLabels = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' },
   scene.remove(yLabel);
   scene.remove(zLabel);
   
-  // Create and add new sprites
-  const newXLabel = createTextSprite(axisLabels.x, new THREE.Vector3(2.2, 0, 0), '#ff5555', fontSize);
-  const newYLabel = createTextSprite(axisLabels.y, new THREE.Vector3(0, 2.2, 0), '#55ff55', fontSize);
-  const newZLabel = createTextSprite(axisLabels.z, new THREE.Vector3(0, 0, 2.2), '#5555ff', fontSize);
+  // Remove any additional labels that might have been added previously
+  if (scene.userData.additionalLabels) {
+    scene.userData.additionalLabels.forEach(label => {
+      scene.remove(label);
+    });
+  }
+  
+  // Initialize or reset the additional labels array
+  scene.userData.additionalLabels = [];
+  
+  // Position primary labels above the axis ends
+  const xLabelPos = new THREE.Vector3(2.2, 0.15, 0);
+  const yLabelPos = new THREE.Vector3(0, 2.2 + 0.15, 0);
+  const zLabelPos = new THREE.Vector3(0, 0.15, 2.2);
+  
+  // Create and add new primary sprites
+  const newXLabel = createTextSprite(axisLabels.x, xLabelPos, '#ff5555', fontSize);
+  const newYLabel = createTextSprite(axisLabels.y, yLabelPos, '#55ff55', fontSize);
+  const newZLabel = createTextSprite(axisLabels.z, zLabelPos, '#5555ff', fontSize);
   
   scene.add(newXLabel);
   scene.add(newYLabel);
   scene.add(newZLabel);
   
-  // Update the references in scene.userData
+  // Add additional labels if requested and if we have dimension info and reduction data
+  if (labelsPerAxis > 1 && dimensionInfo && dimensionReduction) {
+    try {
+      // Find the most representative words for each dimension
+      const additionalLabels = findTopWordsForDimensions(dimensionReduction, dimensionInfo, labelsPerAxis);
+      
+      // Add X axis additional labels
+      if (additionalLabels.x && additionalLabels.x.length) {
+        additionalLabels.x.forEach((label, index) => {
+          if (index === 0) return; // Skip the first one as it's already the primary label
+          const position = new THREE.Vector3(2.2 - (index * 0.4), 0.15, 0);
+          const sprite = createTextSprite(label, position, '#ff5555', fontSize * 0.8);
+          scene.add(sprite);
+          scene.userData.additionalLabels.push(sprite);
+        });
+      }
+      
+      // Add Y axis additional labels
+      if (additionalLabels.y && additionalLabels.y.length) {
+        additionalLabels.y.forEach((label, index) => {
+          if (index === 0) return; // Skip the first one as it's already the primary label
+          const position = new THREE.Vector3(0, 2.2 + 0.15 - (index * 0.4), 0);
+          const sprite = createTextSprite(label, position, '#55ff55', fontSize * 0.8);
+          scene.add(sprite);
+          scene.userData.additionalLabels.push(sprite);
+        });
+      }
+      
+      // Add Z axis additional labels
+      if (additionalLabels.z && additionalLabels.z.length) {
+        additionalLabels.z.forEach((label, index) => {
+          if (index === 0) return; // Skip the first one as it's already the primary label
+          const position = new THREE.Vector3(0, 0.15, 2.2 - (index * 0.4));
+          const sprite = createTextSprite(label, position, '#5555ff', fontSize * 0.8);
+          scene.add(sprite);
+          scene.userData.additionalLabels.push(sprite);
+        });
+      }
+    } catch (error) {
+      console.error('Error adding additional axis labels:', error);
+    }
+  }
+  
+  // Store the new labels in scene userData
   scene.userData.axisLabels = { x: newXLabel, y: newYLabel, z: newZLabel };
-  scene.userData.textSize = fontSize; // Store updated text size
+  scene.userData.textSize = fontSize;
   
   return true;
-};
+}
+
+/**
+ * Finds the most representative words for each dimension
+ * 
+ * @param {Object} dimensionReduction - The dimension reduction result
+ * @param {Object} dimensionInfo - Information about the dimensions being displayed
+ * @param {Number} count - Number of words to find per dimension
+ * @returns {Object} - Object containing arrays of top words for each axis
+ */
+const findTopWordsForDimensions = (dimensionReduction, dimensionInfo, count) => {
+  if (!dimensionReduction || !dimensionReduction.wordObjects || !dimensionInfo) {
+    return { x: [], y: [], z: [] };
+  }
+  
+  const { wordObjects } = dimensionReduction;
+  const { xDimension, yDimension, zDimension } = dimensionInfo;
+  
+  // Sort words by their value in each dimension to find the most representative ones
+  const xWords = [...wordObjects].sort((a, b) => {
+    return Math.abs(b.embedding[xDimension]) - Math.abs(a.embedding[xDimension]);
+  }).slice(0, count).map(obj => obj.text);
+  
+  const yWords = [...wordObjects].sort((a, b) => {
+    return Math.abs(b.embedding[yDimension]) - Math.abs(a.embedding[yDimension]);
+  }).slice(0, count).map(obj => obj.text);
+  
+  const zWords = [...wordObjects].sort((a, b) => {
+    return Math.abs(b.embedding[zDimension]) - Math.abs(a.embedding[zDimension]);
+  }).slice(0, count).map(obj => obj.text);
+  
+  return { x: xWords, y: yWords, z: zWords };
+}
 
 /**
  * Safely dispose Three.js objects to prevent memory leaks

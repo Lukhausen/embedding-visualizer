@@ -36,18 +36,18 @@ function SettingsManager({ textSize = 1, onTextSizeChange }) {
     <div className="settings-container">
       <div className="settings-group">
         <h4 className="settings-section-title">
-          <FaCog /> Display Settings
+          <FaCog /> Visual Settings
         </h4>
         
         <div className="settings-item">
-          <label htmlFor="text-size-input">3D Text Size:</label>
+          <label htmlFor="text-size-input">Label Size:</label>
           <div className="settings-control">
             <input
               id="text-size-input"
               type="range"
               min="0.5"
-              max="2"
-              step="0.1"
+              max="5"
+              step="0.2"
               value={localTextSize}
               onChange={handleTextSizeChange}
               className="settings-slider"
@@ -55,7 +55,7 @@ function SettingsManager({ textSize = 1, onTextSizeChange }) {
             <span className="settings-value">{localTextSize.toFixed(1)}x</span>
           </div>
           <div className="settings-description">
-            Adjust the size of text labels in the 3D visualization
+            Adjust the size of text labels in the 3D view
           </div>
         </div>
       </div>

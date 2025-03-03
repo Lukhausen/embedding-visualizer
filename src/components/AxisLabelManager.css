@@ -2,7 +2,6 @@
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  padding: 0.5rem;
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
@@ -21,6 +20,9 @@
   font-size: 0.9rem;
   line-height: 1.4;
   color: #f0f0f0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .axis-label-inputs {
@@ -32,6 +34,10 @@
   max-width: 100%;
   box-sizing: border-box;
   overflow: hidden;
+  background-color: rgba(40, 40, 40, 0.7);
+  border-radius: 4px;
+  padding: 1rem;
+  border-left: 3px solid #5db0ff;
 }
 
 .axis-label-row {
@@ -79,7 +85,6 @@
 
 /* Suggestions section */
 .suggestions-section {
-  margin-top: 1.5rem;
   background-color: rgba(30, 30, 30, 0.5);
   border-radius: 4px;
 }
@@ -246,15 +251,16 @@
 .iteration-controls {
   background-color: rgba(40, 40, 40, 0.7);
   border-radius: 4px;
-  padding: 0.75rem;
+  padding: 1rem;
   margin-bottom: 1rem;
+  border-left: 3px solid #e9a054;
 }
 
 .iteration-row {
   display: flex;
   flex-direction: row;
   gap: 1.5rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.75rem;
 }
 
 .iteration-group {
@@ -267,12 +273,24 @@
 .iteration-controls label {
   font-size: 0.9rem;
   color: #ddd;
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   margin-bottom: 0.5rem;
 }
 
 .iteration-value {
   font-weight: bold;
+  color: #e9a054;
+}
+
+.iteration-description {
+  font-size: 0.85rem;
+  color: #aaa;
+  margin-top: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .iteration-slider {
@@ -319,12 +337,6 @@
 
 .iteration-slider:disabled {
   opacity: 0.5;
-}
-
-.iteration-description {
-  font-size: 0.8rem;
-  color: #999;
-  margin-top: 0.5rem;
 }
 
 .progress-bar-container {
@@ -495,4 +507,55 @@
 
 .pulsing-progress {
   animation: pulse 2s ease-in-out infinite;
+}
+
+.labels-per-axis-control {
+  background-color: rgba(40, 40, 40, 0.7);
+  border-radius: 4px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  border-left: 3px solid #4a6cf7;
+}
+
+.labels-per-axis-control .control-description {
+  margin-bottom: 0.75rem;
+}
+
+.labels-per-axis-control .control-description p {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  color: #f0f0f0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.labels-per-axis-control .control-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.labels-per-axis-control label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: #ddd;
+}
+
+.labels-per-axis-value {
+  font-weight: bold;
+  color: #4a6cf7;
+}
+
+@media (prefers-color-scheme: light) {
+  .labels-per-axis-control {
+    background-color: rgba(240, 240, 240, 0.9);
+  }
+  
+  .labels-per-axis-control .control-description p {
+    color: #333;
+  }
 } 

@@ -24,7 +24,8 @@ const EmbeddingVisualizer = forwardRef(({
   onFocusChanged, 
   algorithmId = 'pca', 
   axisLabels = { x: "X", y: "Y", z: "Z" },
-  textSize = 1
+  textSize = 1,
+  labelsPerAxis = 1
 }, ref) => {
   const containerRef = useRef(null)
   const sceneRef = useRef(null)
@@ -264,22 +265,40 @@ const EmbeddingVisualizer = forwardRef(({
   useEffect(() => {
     if (!sceneRef.current) return
     
-    updateAxisLabels(sceneRef.current, axisLabels, textSize)
-  }, [axisLabels, textSize]);
+    updateAxisLabels(sceneRef.current, axisLabels, textSize, labelsPerAxis, dimensionInfo, dimensionReduction);
+  }, [axisLabels, textSize, labelsPerAxis, dimensionInfo, dimensionReduction]);
 
   // Helper function to create word labels with adjustable size
   const createWordLabel = (text, position, color, textSizeMultiplier) => {
     const canvas = document.createElement('canvas')
     const context = canvas.getContext('2d')
-    canvas.width = 256
-    canvas.height = 32
+    
+    // Scale canvas based on text size with a more generous allocation for larger sizes
+    const baseWidth = 256;
+    const baseHeight = 32;
+    
+    // Use a non-linear scaling for very large text sizes to prevent excessive canvas sizes
+    const effectiveScale = textSizeMultiplier <= 2 ? textSizeMultiplier : 2 + (textSizeMultiplier - 2) * 0.7;
+    
+    canvas.width = Math.ceil(baseWidth * effectiveScale * (1 + text.length * 0.03));
+    canvas.height = Math.ceil(baseHeight * effectiveScale);
     
     const textColor = color.clone().multiplyScalar(1.5).getStyle()
     context.fillStyle = textColor
+    
     // Apply text size scaling
-    const fontSize = Math.round(24 * textSizeMultiplier)
+    const fontSize = Math.round(24 * effectiveScale);
     context.font = `${fontSize}px Arial`
-    context.fillText(text, 4, Math.min(24, fontSize))
+    
+    // Clear canvas with transparent background
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Calculate better text position to prevent cut-off
+    // Center text horizontally in the canvas
+    const textMetrics = context.measureText(text);
+    const textX = (canvas.width - textMetrics.width) / 2;
+    const textY = canvas.height / 2 + fontSize / 3;
+    context.fillText(text, textX, textY);
     
     const texture = new THREE.CanvasTexture(canvas)
     disposablesRef.current.textures.push(texture)
@@ -291,10 +310,16 @@ const EmbeddingVisualizer = forwardRef(({
     disposablesRef.current.materials.push(spriteMaterial)
     
     const label = new THREE.Sprite(spriteMaterial)
-    label.position.copy(position)
-    label.position.y += 0.1
-    // Scale the sprite based on text size
-    label.scale.set(0.5 * textSizeMultiplier, 0.0625 * textSizeMultiplier, 1)
+    
+    // Position the label above the point
+    const labelPosition = position.clone();
+    labelPosition.y += 0.15 * effectiveScale;
+    label.position.copy(labelPosition);
+    
+    // Use the effective scale to maintain appropriate visible size
+    const widthRatio = effectiveScale * (1 + text.length * 0.03);
+    const heightRatio = effectiveScale;
+    label.scale.set(0.5 * widthRatio, 0.0625 * heightRatio, 1)
 
     return label
   }

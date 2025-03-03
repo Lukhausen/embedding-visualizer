@@ -68,9 +68,9 @@ function ControlPanel({
     }
   }, [onAlgorithmChange]);
   
-  const handleAxisLabelsChange = useCallback((newLabels) => {
+  const handleAxisLabelsChange = useCallback((newLabels, labelsPerAxis) => {
     if (onAxisLabelsChange) {
-      onAxisLabelsChange(newLabels);
+      onAxisLabelsChange(newLabels, labelsPerAxis);
     }
   }, [onAxisLabelsChange]);
   

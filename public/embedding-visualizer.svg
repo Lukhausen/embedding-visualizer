@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="32" height="32">
+  <!-- Background -->
+  <rect width="100" height="100" rx="10" fill="#1a1a2e" />
+  
+  <!-- 3D Coordinate grid -->
+  <line x1="20" y1="80" x2="80" y2="80" stroke="#4c9eeb" stroke-width="2" />
+  <line x1="20" y1="80" x2="20" y2="20" stroke="#4c9eeb" stroke-width="2" />
+  <line x1="20" y1="80" x2="50" y2="50" stroke="#4c9eeb" stroke-width="2" />
+  
+  <!-- Points representing embeddings -->
+  <circle cx="60" cy="40" r="5" fill="#e63946" />
+  <circle cx="40" cy="50" r="5" fill="#06d6a0" />
+  <circle cx="70" cy="60" r="5" fill="#ffd166" />
+  
+  <!-- Connection lines -->
+  <line x1="60" y1="40" x2="40" y2="50" stroke="#ffffff" stroke-width="1" opacity="0.6" />
+  <line x1="40" y1="50" x2="70" y2="60" stroke="#ffffff" stroke-width="1" opacity="0.6" />
+  <line x1="70" y1="60" x2="60" y2="40" stroke="#ffffff" stroke-width="1" opacity="0.6" />
+</svg> 
