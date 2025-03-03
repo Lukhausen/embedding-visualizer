@@ -1,6 +1,5 @@
 import { useState, useCallback } from 'react'
-import ApiKeyManager from './components/ApiKeyManager'
-import WordListManager from './components/WordListManager'
+import ControlPanel from './components/ControlPanel'
 import EmbeddingVisualizer from './components/EmbeddingVisualizer'
 import './App.css'
 
@@ -13,11 +12,8 @@ function App() {
 
   return (
     <div className="app-container">
-      <ApiKeyManager />
-      <h1>Embedding Visualizer</h1>
-      <p>Use this tool to visualize embeddings from OpenAI's API.</p>
+      <ControlPanel onWordsChange={handleWordsChange} />
       <EmbeddingVisualizer words={words} />
-      <WordListManager onWordsChange={handleWordsChange} />
     </div>
   )
 }

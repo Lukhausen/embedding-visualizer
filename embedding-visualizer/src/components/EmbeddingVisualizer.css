@@ -1,13 +1,32 @@
 .embedding-visualizer {
-  width: 100%;
-  height: 500px;
-  background-color: #f0f0f0;
-  border-radius: 8px;
-  overflow: hidden;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 0;
+}
+
+.visualizer-overlay {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  z-index: 10;
+  padding: 8px;
+  background-color: rgba(0, 0, 0, 0.5);
+  color: white;
+  border-radius: 4px;
+  font-size: 14px;
+  pointer-events: none;
+  font-family: monospace;
 }
 
 @media (prefers-color-scheme: dark) {
   .embedding-visualizer {
-    background-color: #2c2c2c;
+    background-color: #1a1a1a;
+  }
+  
+  .visualizer-overlay {
+    background-color: rgba(255, 255, 255, 0.2);
   }
 } 

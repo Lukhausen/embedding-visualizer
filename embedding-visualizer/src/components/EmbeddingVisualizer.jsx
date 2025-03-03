@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
 import './EmbeddingVisualizer.css'
@@ -10,19 +10,30 @@ function EmbeddingVisualizer({ words = [] }) {
   const rendererRef = useRef(null)
   const controlsRef = useRef(null)
   const pointsRef = useRef({})
+  const [showControls, setShowControls] = useState(true)
 
+  // Hide controls info after 5 seconds
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setShowControls(false)
+    }, 5000)
+    
+    return () => clearTimeout(timer)
+  }, [])
+
+  // Initialize the 3D scene
   useEffect(() => {
     if (!containerRef.current) return
 
     // Initialize scene
     const scene = new THREE.Scene()
-    scene.background = new THREE.Color(0xf0f0f0)
+    scene.background = new THREE.Color(0x1a1a1a)
     sceneRef.current = scene
 
     // Initialize camera
     const camera = new THREE.PerspectiveCamera(
       75,
-      containerRef.current.clientWidth / containerRef.current.clientHeight,
+      window.innerWidth / window.innerHeight,
       0.1,
       1000
     )
@@ -33,7 +44,7 @@ function EmbeddingVisualizer({ words = [] }) {
 
     // Initialize renderer
     const renderer = new THREE.WebGLRenderer({ antialias: true })
-    renderer.setSize(containerRef.current.clientWidth, containerRef.current.clientHeight)
+    renderer.setSize(window.innerWidth, window.innerHeight)
     containerRef.current.appendChild(renderer.domElement)
     rendererRef.current = renderer
 
@@ -48,12 +59,12 @@ function EmbeddingVisualizer({ words = [] }) {
     scene.add(axesHelper)
 
     // Add axis labels
-    const createLabel = (text, position) => {
+    const createLabel = (text, position, color = '#ffffff') => {
       const canvas = document.createElement('canvas')
       const context = canvas.getContext('2d')
       canvas.width = 128
       canvas.height = 32
-      context.fillStyle = '#000000'
+      context.fillStyle = color
       context.font = '24px Arial'
       context.fillText(text, 4, 24)
       
@@ -65,13 +76,21 @@ function EmbeddingVisualizer({ words = [] }) {
       return sprite
     }
 
-    scene.add(createLabel('X', new THREE.Vector3(2.2, 0, 0)))
-    scene.add(createLabel('Y', new THREE.Vector3(0, 2.2, 0)))
-    scene.add(createLabel('Z', new THREE.Vector3(0, 0, 2.2)))
+    scene.add(createLabel('X', new THREE.Vector3(2.2, 0, 0), '#ff5555'))
+    scene.add(createLabel('Y', new THREE.Vector3(0, 2.2, 0), '#55ff55'))
+    scene.add(createLabel('Z', new THREE.Vector3(0, 0, 2.2), '#5555ff'))
 
     // Add grid helper
-    const gridHelper = new THREE.GridHelper(4, 10)
+    const gridHelper = new THREE.GridHelper(4, 10, 0x555555, 0x333333)
     scene.add(gridHelper)
+
+    // Add lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5)
+    scene.add(ambientLight)
+    
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8)
+    directionalLight.position.set(5, 5, 5)
+    scene.add(directionalLight)
 
     // Animation loop
     const animate = () => {
@@ -83,19 +102,18 @@ function EmbeddingVisualizer({ words = [] }) {
 
     // Handle window resize
     const handleResize = () => {
-      if (!containerRef.current) return
-      const width = containerRef.current.clientWidth
-      const height = containerRef.current.clientHeight
-      renderer.setSize(width, height)
-      camera.aspect = width / height
+      camera.aspect = window.innerWidth / window.innerHeight
       camera.updateProjectionMatrix()
+      renderer.setSize(window.innerWidth, window.innerHeight)
     }
     window.addEventListener('resize', handleResize)
 
     return () => {
       window.removeEventListener('resize', handleResize)
       renderer.dispose()
-      containerRef.current?.removeChild(renderer.domElement)
+      if (containerRef.current) {
+        containerRef.current.removeChild(renderer.domElement)
+      }
     }
   }, [])
 
@@ -111,17 +129,26 @@ function EmbeddingVisualizer({ words = [] }) {
     pointsRef.current = {}
 
     // Add new points
-    words.forEach((word, index) => {
-      // For now, create random positions (you'll replace this with actual embedding coordinates)
+    words.forEach((word) => {
+      // Create random positions (to be replaced with actual embeddings)
       const position = new THREE.Vector3(
         (Math.random() - 0.5) * 3,
         (Math.random() - 0.5) * 3,
         (Math.random() - 0.5) * 3
       )
 
-      // Create point geometry
+      // Create point with unique color
       const geometry = new THREE.SphereGeometry(0.05, 32, 32)
-      const material = new THREE.MeshBasicMaterial({ color: 0x0088ff })
+      const hue = (position.x + 1.5) / 3 * 0.33 + (position.z + 1.5) / 3 * 0.67
+      const color = new THREE.Color().setHSL(hue, 0.8, 0.6)
+      
+      const material = new THREE.MeshStandardMaterial({ 
+        color: color,
+        emissive: color.clone().multiplyScalar(0.3),
+        metalness: 0.3,
+        roughness: 0.7
+      })
+      
       const mesh = new THREE.Mesh(geometry, material)
       mesh.position.copy(position)
 
@@ -130,12 +157,17 @@ function EmbeddingVisualizer({ words = [] }) {
       const context = canvas.getContext('2d')
       canvas.width = 256
       canvas.height = 32
-      context.fillStyle = '#000000'
+      
+      const textColor = color.clone().multiplyScalar(1.5).getStyle()
+      context.fillStyle = textColor
       context.font = '24px Arial'
       context.fillText(word, 4, 24)
       
       const texture = new THREE.CanvasTexture(canvas)
-      const spriteMaterial = new THREE.SpriteMaterial({ map: texture })
+      const spriteMaterial = new THREE.SpriteMaterial({ 
+        map: texture,
+        transparent: true 
+      })
       const label = new THREE.Sprite(spriteMaterial)
       label.position.copy(position)
       label.position.y += 0.1
@@ -148,7 +180,19 @@ function EmbeddingVisualizer({ words = [] }) {
     })
   }, [words])
 
-  return <div ref={containerRef} className="embedding-visualizer" />
+  return (
+    <>
+      <div ref={containerRef} className="embedding-visualizer" />
+      {showControls && (
+        <div className="visualizer-overlay">
+          Controls:<br />
+          Left-click + drag: Rotate<br />
+          Right-click + drag: Pan<br />
+          Scroll: Zoom
+        </div>
+      )}
+    </>
+  )
 }
 
-export default EmbeddingVisualizer 
+export default EmbeddingVisualizer
