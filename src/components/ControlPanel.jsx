@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { FaChevronLeft, FaChevronRight, FaList, FaKey } from 'react-icons/fa'
+import { FaChevronLeft, FaChevronRight, FaList, FaKey, FaCube } from 'react-icons/fa'
 import ApiKeyManager from './ApiKeyManager'
 import WordListManager from './WordListManager'
+import DimensionReductionSelector from './DimensionReductionSelector'
 import './ControlPanel.css'
 
-function ControlPanel({ words, onWordsChange }) {
+function ControlPanel({ words, onWordsChange, selectedAlgorithm, onAlgorithmChange }) {
   const [isCollapsed, setIsCollapsed] = useState(false)
-  const [activeTab, setActiveTab] = useState('words') // 'words' or 'settings'
+  const [activeTab, setActiveTab] = useState('words') // 'words', 'settings', or 'dimensions'
   
   // Check if panel state was saved previously - run only once
   useEffect(() => {
@@ -47,9 +48,14 @@ function ControlPanel({ words, onWordsChange }) {
   
   const handleWordsChange = useCallback((newWords) => {
     // Only update state and notify parent if the array has actually changed
-    // The JSON.stringify comparison is causing issues because it runs on every render
     onWordsChange(newWords); // Directly call onWordsChange to update App's state
   }, [onWordsChange]);
+  
+  const handleAlgorithmChange = useCallback((algorithmId) => {
+    if (onAlgorithmChange) {
+      onAlgorithmChange(algorithmId);
+    }
+  }, [onAlgorithmChange]);
   
   return (
     <div className={`control-panel ${isCollapsed ? 'collapsed' : ''}`}>
@@ -62,6 +68,15 @@ function ControlPanel({ words, onWordsChange }) {
         >
           <FaList size={20} />
           <span className="tab-label">Words ({words.length})</span>
+        </button>
+        <button 
+          className={`tab-button ${activeTab === 'dimensions' ? 'active' : ''}`}
+          onClick={() => changeTab('dimensions')}
+          aria-label="Dimension Reduction"
+          title="Dimension Reduction"
+        >
+          <FaCube size={20} />
+          <span className="tab-label">Dimensions</span>
         </button>
         <button 
           className={`tab-button ${activeTab === 'settings' ? 'active' : ''}`}
@@ -80,6 +95,10 @@ function ControlPanel({ words, onWordsChange }) {
             {activeTab === 'words' ? (
               <>
                 <FaList /> Words for Embedding
+              </>
+            ) : activeTab === 'dimensions' ? (
+              <>
+                <FaCube /> Dimension Reduction
               </>
             ) : (
               <>
@@ -102,6 +121,18 @@ function ControlPanel({ words, onWordsChange }) {
             <WordListManager
               onWordsChange={handleWordsChange}
               initialWords={words}
+            />
+          </div>
+        )}
+        
+        {activeTab === 'dimensions' && (
+          <div className="tab-content">
+            <div className="dimension-description">
+              <p>Select an algorithm to reduce the high-dimensional embedding vectors to 3D coordinates for visualization.</p>
+            </div>
+            <DimensionReductionSelector
+              selectedAlgorithm={selectedAlgorithm}
+              onChange={handleAlgorithmChange}
             />
           </div>
         )}

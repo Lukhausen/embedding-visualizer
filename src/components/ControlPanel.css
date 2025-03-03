@@ -143,6 +143,21 @@
   box-shadow: 2px 0 5px rgba(0, 0, 0, 0.3);
 }
 
+.dimension-description {
+  margin-bottom: 15px;
+  padding: 10px 12px;
+  background-color: #2a2a2a;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  color: #ccc;
+  line-height: 1.4;
+  border-left: 3px solid #5a8bbd;
+}
+
+.dimension-description p {
+  margin: 0;
+}
+
 @media (prefers-color-scheme: light) {
   .control-panel {
     background-color: rgba(245, 245, 250, 0.9);
@@ -179,5 +194,11 @@
   .collapsed-hint {
     background-color: rgba(245, 245, 250, 0.9);
     color: #333;
+  }
+  
+  .dimension-description {
+    background-color: #f0f0f0;
+    color: #555;
+    border-left-color: #4a88da;
   }
 } 

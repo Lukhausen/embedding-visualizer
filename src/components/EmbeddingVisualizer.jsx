@@ -12,8 +12,13 @@ import {
   startAnimationLoop,
   scaleValue
 } from '../services/threeService'
+import {
+  applyDimensionReduction,
+  getCoordinatesFromEmbedding,
+  getDimensionInfo
+} from '../services/dimensionReduction'
 
-const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged }, ref) => {
+const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged, algorithmId = 'pca' }, ref) => {
   const containerRef = useRef(null)
   const sceneRef = useRef(null)
   const cameraRef = useRef(null)
@@ -22,7 +27,8 @@ const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged }, ref) => 
   const pointsRef = useRef({})
   const stopAnimationRef = useRef(null)
   const [showControls, setShowControls] = useState(true)
-  const [principalDimensions, setPrincipalDimensions] = useState(null)
+  const [dimensionReduction, setDimensionReduction] = useState(null)
+  const [dimensionInfo, setDimensionInfo] = useState(null)
   
   // Expose methods to parent components
   useImperativeHandle(ref, () => ({
@@ -175,7 +181,7 @@ const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged }, ref) => 
     }
   }, [onFocusChanged])
 
-  // Find the most informative dimensions across all embeddings
+  // Apply dimension reduction to embeddings
   useEffect(() => {
     // First, collect all embeddings that are available
     const embeddings = []
@@ -198,38 +204,28 @@ const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged }, ref) => 
       }
     }
     
-    // If we have at least one embedding, compute the principal dimensions
+    // If we have at least one embedding, apply dimension reduction
     if (embeddings.length > 0) {
-      // Find the dimensionality of embeddings
-      const dimensions = embeddings[0].length
+      // Apply the selected dimension reduction algorithm
+      const result = applyDimensionReduction(embeddings, algorithmId)
       
-      // Calculate importance of each dimension
-      // (sum of absolute values across all embeddings)
-      const dimensionImportance = new Array(dimensions).fill(0)
-      
-      for (const embedding of embeddings) {
-        for (let i = 0; i < dimensions; i++) {
-          dimensionImportance[i] += Math.abs(embedding[i])
-        }
-      }
-      
-      // Find indices of the three most important dimensions
-      const indexedDims = dimensionImportance.map((value, index) => ({ value, index }))
-      indexedDims.sort((a, b) => b.value - a.value) // Sort in descending order
-      
-      const topDimensions = indexedDims.slice(0, 3).map(item => item.index)
-      
-      // Store the principal dimensions
-      setPrincipalDimensions({
-        indices: topDimensions,
-        wordObjects: wordObjects
+      // Store the dimension reduction result
+      setDimensionReduction({
+        ...result,
+        wordObjects
       })
+      
+      // Get information about the dimensions being used
+      setDimensionInfo(getDimensionInfo(result))
+    } else {
+      setDimensionReduction(null)
+      setDimensionInfo(null)
     }
-  }, [words])
+  }, [words, algorithmId])
 
-  // Update points when principal dimensions change
+  // Update points when dimension reduction changes
   useEffect(() => {
-    if (!sceneRef.current || !principalDimensions) return
+    if (!sceneRef.current || !dimensionReduction) return
     
     // Store all created geometries, materials, and textures for proper disposal
     const disposables = {
@@ -261,29 +257,13 @@ const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged }, ref) => 
     })
     pointsRef.current = {}
 
-    const { indices, wordObjects } = principalDimensions
-    
-    // Calculate min/max values for each principal dimension to normalize
-    const minValues = [Infinity, Infinity, Infinity]
-    const maxValues = [-Infinity, -Infinity, -Infinity]
-    
-    for (const wordObj of wordObjects) {
-      for (let i = 0; i < 3; i++) {
-        const dimIndex = indices[i]
-        const value = wordObj.embedding[dimIndex]
-        minValues[i] = Math.min(minValues[i], value)
-        maxValues[i] = Math.max(maxValues[i], value)
-      }
-    }
+    const { wordObjects } = dimensionReduction
     
     // Add points for each word
     wordObjects.forEach((wordObj) => {
-      // Map the three principal dimensions to x, y, z
-      const position = new THREE.Vector3(
-        scaleValue(wordObj.embedding[indices[0]], minValues[0], maxValues[0]),
-        scaleValue(wordObj.embedding[indices[1]], minValues[1], maxValues[1]),
-        scaleValue(wordObj.embedding[indices[2]], minValues[2], maxValues[2])
-      )
+      // Get 3D coordinates for this embedding
+      const coordinates = getCoordinatesFromEmbedding(wordObj.embedding, dimensionReduction)
+      const position = new THREE.Vector3(coordinates.x, coordinates.y, coordinates.z)
 
       // Create point with color based on position
       const geometry = new THREE.SphereGeometry(0.05, 32, 32)
@@ -418,7 +398,7 @@ const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged }, ref) => 
         disposeResources(disposables)
       }
     }
-  }, [principalDimensions, words])
+  }, [dimensionReduction, words])
 
   return (
     <div className="embedding-visualizer" ref={containerRef}>
@@ -427,6 +407,17 @@ const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged }, ref) => 
           <p>
             <strong>Controls:</strong> Click and drag to rotate. Scroll to zoom.
             Right-click and drag to pan.
+          </p>
+        </div>
+      )}
+      
+      {dimensionInfo && (
+        <div className="visualizer-info">
+          <p>
+            <strong>Algorithm:</strong> {dimensionInfo.algorithm}<br />
+            <strong>X-axis:</strong> Dimension #{dimensionInfo.xDimension}<br />
+            <strong>Y-axis:</strong> Dimension #{dimensionInfo.yDimension}<br />
+            <strong>Z-axis:</strong> Dimension #{dimensionInfo.zDimension}
           </p>
         </div>
       )}
