@@ -84,12 +84,17 @@ export const createRenderer = (width, height) => {
 export const getControls = (camera, domElement) => {
   if (import.meta.hot && controlsCache) {
     controlsCache.domElement = domElement;
+    controlsCache.enabled = true;
     return controlsCache;
   }
   
   const controls = new OrbitControls(camera, domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.05;
+  controls.enabled = true;
+  controls.enableZoom = true;
+  controls.enableRotate = true;
+  controls.enablePan = true;
   
   // Cache for HMR
   if (import.meta.hot) {
@@ -125,18 +130,27 @@ export const createTextSprite = (text, position, color = '#ffffff') => {
 };
 
 /**
- * Sets up the basic scene with axes, grid, and lighting
+ * Sets up a basic scene with coordinate axes, grid, and lighting
+ * 
  * @param {THREE.Scene} scene - The scene to set up
+ * @param {Object} axisLabels - Optional custom labels for axes {x, y, z}
  */
-export const setupBasicScene = (scene) => {
+export const setupBasicScene = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' }) => {
   // Add coordinate axes
   const axesHelper = new THREE.AxesHelper(2);
   scene.add(axesHelper);
   
-  // Add axis labels
-  scene.add(createTextSprite('X', new THREE.Vector3(2.2, 0, 0), '#ff5555'));
-  scene.add(createTextSprite('Y', new THREE.Vector3(0, 2.2, 0), '#55ff55'));
-  scene.add(createTextSprite('Z', new THREE.Vector3(0, 0, 2.2), '#5555ff'));
+  // Add axis labels - store in scene.userData for later reference
+  const xLabel = createTextSprite(axisLabels.x, new THREE.Vector3(2.2, 0, 0), '#ff5555');
+  const yLabel = createTextSprite(axisLabels.y, new THREE.Vector3(0, 2.2, 0), '#55ff55');
+  const zLabel = createTextSprite(axisLabels.z, new THREE.Vector3(0, 0, 2.2), '#5555ff');
+  
+  scene.add(xLabel);
+  scene.add(yLabel);
+  scene.add(zLabel);
+  
+  // Store references to labels in scene.userData for later updates
+  scene.userData.axisLabels = { x: xLabel, y: yLabel, z: zLabel };
   
   // Add grid helper
   const gridHelper = new THREE.GridHelper(4, 10, 0x555555, 0x333333);
@@ -149,6 +163,41 @@ export const setupBasicScene = (scene) => {
   const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
   directionalLight.position.set(5, 5, 5);
   scene.add(directionalLight);
+};
+
+/**
+ * Updates the axis labels in the scene with new custom labels
+ * 
+ * @param {THREE.Scene} scene - The scene containing the axis labels
+ * @param {Object} axisLabels - Custom labels for axes {x, y, z}
+ * @returns {boolean} True if update was successful
+ */
+export const updateAxisLabels = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' }) => {
+  if (!scene || !scene.userData.axisLabels) {
+    return false;
+  }
+  
+  // Get the stored label sprites
+  const { x: xLabel, y: yLabel, z: zLabel } = scene.userData.axisLabels;
+  
+  // Remove old sprites
+  scene.remove(xLabel);
+  scene.remove(yLabel);
+  scene.remove(zLabel);
+  
+  // Create and add new sprites
+  const newXLabel = createTextSprite(axisLabels.x, new THREE.Vector3(2.2, 0, 0), '#ff5555');
+  const newYLabel = createTextSprite(axisLabels.y, new THREE.Vector3(0, 2.2, 0), '#55ff55');
+  const newZLabel = createTextSprite(axisLabels.z, new THREE.Vector3(0, 0, 2.2), '#5555ff');
+  
+  scene.add(newXLabel);
+  scene.add(newYLabel);
+  scene.add(newZLabel);
+  
+  // Update the references in scene.userData
+  scene.userData.axisLabels = { x: newXLabel, y: newYLabel, z: newZLabel };
+  
+  return true;
 };
 
 /**
@@ -227,6 +276,9 @@ export const startAnimationLoop = (renderFunction) => {
   
   const animate = () => {
     animationIdCache = requestAnimationFrame(animate);
+    if (controlsCache) {
+      controlsCache.update();
+    }
     renderFunction();
   };
   

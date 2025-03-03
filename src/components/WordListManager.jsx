@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
-import { FaPlus, FaTimes, FaTable, FaSortAmountDown, FaSortAmountUp, FaTh } from 'react-icons/fa'
+import { FaPlus, FaTimes, FaTable } from 'react-icons/fa'
 import { toast } from 'react-toastify'
 import { getEmbedding } from '../services/openaiService'
+import EmbeddingViewer from './EmbeddingViewer'
 import './WordListManager.css'
 
 function WordListManager({ onWordsChange, initialWords = [] }) {
@@ -10,7 +11,6 @@ function WordListManager({ onWordsChange, initialWords = [] }) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [selectedEmbedding, setSelectedEmbedding] = useState(null)
-  const [sortDirection, setSortDirection] = useState(null)
   const [isInitialized, setIsInitialized] = useState(false)
 
   // Load saved words only once on initial mount
@@ -162,187 +162,23 @@ function WordListManager({ onWordsChange, initialWords = [] }) {
     }
   }, [])
   
+  // Show the embedding viewer modal
   const showEmbedding = (embedding, word) => {
     setSelectedEmbedding({ 
-      data: embedding, 
-      word,
-      sortedData: null // Initialize with no sorting
+      data: embedding,
+      word
     });
-    setSortDirection(null);
   }
   
+  // Close the embedding viewer modal
   const closeEmbeddingView = () => {
     setSelectedEmbedding(null);
-    setSortDirection(null);
   }
   
-  const handleSort = (direction) => {
-    if (!selectedEmbedding?.data) return;
-    
-    if (sortDirection === direction) {
-      // If already sorted in this direction, remove sorting
-      setSelectedEmbedding({
-        ...selectedEmbedding,
-        sortedData: null
-      });
-      setSortDirection(null);
-    } else {
-      // Apply the requested sorting
-      const sortedData = sortEmbedding(selectedEmbedding.data, direction);
-      setSelectedEmbedding({
-        ...selectedEmbedding,
-        sortedData
-      });
-      setSortDirection(direction);
-    }
+  // Handle embedding viewer callbacks
+  const handleEmbeddingViewerClose = () => {
+    closeEmbeddingView();
   }
-  
-  // Add a sorting function for embedding values - now using absolute magnitude
-  const sortEmbedding = (embedding, direction) => {
-    if (!embedding || !direction) return embedding;
-
-    // Create pairs of [value, index] to preserve original positions
-    const pairs = embedding.map((value, index) => ({ value, index, magnitude: Math.abs(value) }));
-    
-    // Sort by magnitude (absolute value)
-    pairs.sort((a, b) => {
-      if (direction === 'asc') {
-        return a.magnitude - b.magnitude; // Smallest absolute value first
-      } else {
-        return b.magnitude - a.magnitude; // Largest absolute value first
-      }
-    });
-    
-    return pairs;
-  }
-  
-  // Function to render embedding data in a readable format
-  const renderEmbeddingData = (embedding) => {
-    if (!embedding) return 'No embedding data available';
-    
-    // Determine whether to use sorted or original data
-    const dataToRender = selectedEmbedding?.sortedData || embedding.map((value, index) => ({ value, index }));
-    
-    // Find the maximum absolute value for scaling the visualization
-    const maxMagnitude = Math.max(...dataToRender.map(item => Math.abs(item.value)));
-    
-    const renderValueBar = (value) => {
-      const absValue = Math.abs(value);
-      const percentage = (absValue / maxMagnitude) * 50; // 50% of width (to allow for centering)
-      const isPositive = value >= 0;
-      
-      return (
-        <div className="value-visualization">
-          <div className="value-text">{value.toFixed(6)}</div>
-          <div className="value-bar-container">
-            <div className="center-marker"></div>
-            {isPositive ? (
-              <div 
-                className="value-bar positive" 
-                style={{ width: `${percentage}%`, left: '50%' }} 
-                title={`Positive: ${value.toFixed(6)}`}
-              />
-            ) : (
-              <div 
-                className="value-bar negative" 
-                style={{ width: `${percentage}%`, right: '50%' }} 
-                title={`Negative: ${value.toFixed(6)}`}
-              />
-            )}
-          </div>
-        </div>
-      );
-    };
-    
-    if (embedding.length > 50) {
-      // For large embeddings, show with pagination or limited view
-      return (
-        <div className="embedding-data">
-          <p>Vector of {embedding.length} dimensions</p>
-          <div className="embedding-table">
-            {dataToRender.slice(0, 100).map((item) => (
-              <div key={item.index} className="embedding-row">
-                <span className="dimension">[{item.index}]:</span>
-                {renderValueBar(item.value)}
-              </div>
-            ))}
-            {embedding.length > 100 && (
-              <div className="embedding-ellipsis">
-                ...and {embedding.length - 100} more values
-              </div>
-            )}
-          </div>
-        </div>
-      );
-    }
-    
-    // For smaller embeddings, show all values
-    return (
-      <div className="embedding-data">
-        <div className="embedding-table">
-          {dataToRender.map((item) => (
-            <div key={item.index} className="embedding-row">
-              <span className="dimension">[{item.index}]:</span>
-              {renderValueBar(item.value)}
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-  
-  // Replace the embedding modal with this full-page version
-  const renderEmbeddingModal = () => {
-    if (!selectedEmbedding) return null;
-    
-    return (
-      <div className="embedding-modal-overlay-fullscreen" onClick={closeEmbeddingView}>
-        <div className="embedding-modal-fullscreen" onClick={e => e.stopPropagation()}>
-          <div className="embedding-modal-header">
-            <h3>Embedding for "{selectedEmbedding.word}"</h3>
-            <div className="embedding-controls">
-              <button 
-                className={`sort-button ${sortDirection === 'desc' ? 'active' : ''}`}
-                onClick={() => handleSort('desc')}
-                title="Sort by highest magnitude"
-              >
-                <FaSortAmountDown />
-                <span>Highest |x|</span>
-              </button>
-              <button 
-                className={`sort-button ${sortDirection === 'asc' ? 'active' : ''}`}
-                onClick={() => handleSort('asc')}
-                title="Sort by lowest magnitude"
-              >
-                <FaSortAmountUp />
-                <span>Lowest |x|</span>
-              </button>
-              <button 
-                className={`sort-button ${sortDirection === null ? 'active' : ''}`}
-                onClick={() => {
-                  setSelectedEmbedding({
-                    ...selectedEmbedding,
-                    sortedData: null
-                  });
-                  setSortDirection(null);
-                }}
-                title="Original order"
-              >
-                <FaTh />
-                <span>Original</span>
-              </button>
-              <button className="close-modal-button" onClick={closeEmbeddingView}>
-                <FaTimes />
-              </button>
-            </div>
-          </div>
-          <div className="embedding-modal-content">
-            {renderEmbeddingData(selectedEmbedding.data)}
-          </div>
-        </div>
-      </div>
-    );
-  };
   
   return (
     <div className="word-list-container">
@@ -421,7 +257,13 @@ function WordListManager({ onWordsChange, initialWords = [] }) {
         </div>
       )}
       
-      {selectedEmbedding && renderEmbeddingModal()}
+      {selectedEmbedding && (
+        <EmbeddingViewer 
+          embedding={selectedEmbedding.data} 
+          word={selectedEmbedding.word} 
+          onClose={handleEmbeddingViewerClose} 
+        />
+      )}
       
       {loading && <div className="loading-overlay">Generating embedding...</div>}
     </div>

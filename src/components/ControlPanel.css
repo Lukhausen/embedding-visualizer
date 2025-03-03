@@ -12,6 +12,7 @@
   backdrop-filter: blur(10px);
   box-shadow: 0 0 15px rgba(0, 0, 0, 0.3);
   border-right: 1px solid rgba(255, 255, 255, 0.1);
+  pointer-events: none;
 }
 
 .control-panel.collapsed {
@@ -26,6 +27,7 @@
   flex-direction: column;
   padding-top: 15px;
   border-right: 1px solid rgba(255, 255, 255, 0.1);
+  pointer-events: auto;
 }
 
 .tab-button {
@@ -76,6 +78,7 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  pointer-events: auto;
 }
 
 .collapsed .control-panel-content {
@@ -141,6 +144,7 @@
   z-index: 101;
   cursor: pointer;
   box-shadow: 2px 0 5px rgba(0, 0, 0, 0.3);
+  pointer-events: auto;
 }
 
 .dimension-description {

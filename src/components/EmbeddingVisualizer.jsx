@@ -10,7 +10,8 @@ import {
   disposeResources,
   registerHMRHandlers,
   startAnimationLoop,
-  scaleValue
+  scaleValue,
+  updateAxisLabels
 } from '../services/threeService'
 import {
   applyDimensionReduction,
@@ -18,7 +19,7 @@ import {
   getDimensionInfo
 } from '../services/dimensionReduction'
 
-const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged, algorithmId = 'pca' }, ref) => {
+const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged, algorithmId = 'pca', axisLabels = { x: "X", y: "Y", z: "Z" } }, ref) => {
   const containerRef = useRef(null)
   const sceneRef = useRef(null)
   const cameraRef = useRef(null)
@@ -26,7 +27,6 @@ const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged, algorithmI
   const controlsRef = useRef(null)
   const pointsRef = useRef({})
   const stopAnimationRef = useRef(null)
-  const [showControls, setShowControls] = useState(true)
   const [dimensionReduction, setDimensionReduction] = useState(null)
   const [dimensionInfo, setDimensionInfo] = useState(null)
   
@@ -57,15 +57,6 @@ const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged, algorithmI
     }
   }), []);
 
-  // Hide controls info after 5 seconds
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setShowControls(false)
-    }, 5000)
-    
-    return () => clearTimeout(timer)
-  }, [])
-
   // Initialize the 3D scene
   useEffect(() => {
     if (!containerRef.current) return
@@ -89,7 +80,10 @@ const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged, algorithmI
     
     // Set up the scene if it hasn't been set up yet (first load)
     if (scene.children.length === 0) {
-      setupBasicScene(scene)
+      setupBasicScene(scene, axisLabels)
+    } else {
+      // If the scene already exists, update the axis labels
+      updateAxisLabels(scene, axisLabels)
     }
 
     // Handle window resize
@@ -104,7 +98,9 @@ const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged, algorithmI
     
     // Set up the animation loop
     const renderFunction = () => {
-      controls.update()
+      if (controls) {
+        controls.update() // Make sure controls are updated every frame
+      }
       renderer.render(scene, camera)
     }
     
@@ -159,29 +155,35 @@ const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged, algorithmI
     }
 
     return () => {
-      // Only fully clean up if not handling HMR
-      if (!import.meta.hot) {
-        window.removeEventListener('resize', handleResize)
-        
-        // Stop animation loop
-        if (stopAnimationRef.current) {
-          stopAnimationRef.current()
-        }
-        
-        // Dispose renderer and remove from DOM
-        if (rendererRef.current) {
-          rendererRef.current.dispose()
-          rendererRef.current.forceContextLoss()
-        }
-        
-        if (containerRef.current && rendererRef.current) {
-          containerRef.current.removeChild(rendererRef.current.domElement)
-        }
+      // Clean up on unmount
+      if (stopAnimationRef.current) {
+        stopAnimationRef.current()
+      }
+      
+      window.removeEventListener('resize', handleResize)
+      
+      if (rendererRef.current) {
+        rendererRef.current.dispose()
+        rendererRef.current.forceContextLoss()
+        rendererRef.current.domElement.remove()
+      }
+
+      // Make sure to dispose of controls
+      if (controlsRef.current) {
+        controlsRef.current.dispose()
       }
     }
-  }, [onFocusChanged])
+  }, [onFocusChanged]) // Only re-run on onFocusChanged change
 
-  // Apply dimension reduction to embeddings
+  // Make sure controls are updated when axisLabels change
+  useEffect(() => {
+    if (sceneRef.current && controlsRef.current) {
+      updateAxisLabels(sceneRef.current, axisLabels)
+      controlsRef.current.update() // Update controls after changing labels
+    }
+  }, [axisLabels])
+
+  // Load and reduce embeddings when words change
   useEffect(() => {
     // First, collect all embeddings that are available
     const embeddings = []
@@ -402,22 +404,13 @@ const EmbeddingVisualizer = forwardRef(({ words = [], onFocusChanged, algorithmI
 
   return (
     <div className="embedding-visualizer" ref={containerRef}>
-      {showControls && (
-        <div className="visualizer-overlay">
-          <p>
-            <strong>Controls:</strong> Click and drag to rotate. Scroll to zoom.
-            Right-click and drag to pan.
-          </p>
-        </div>
-      )}
-      
       {dimensionInfo && (
         <div className="visualizer-info">
           <p>
             <strong>Algorithm:</strong> {dimensionInfo.algorithm}<br />
-            <strong>X-axis:</strong> Dimension #{dimensionInfo.xDimension}<br />
-            <strong>Y-axis:</strong> Dimension #{dimensionInfo.yDimension}<br />
-            <strong>Z-axis:</strong> Dimension #{dimensionInfo.zDimension}
+            <strong>{axisLabels.x}-axis:</strong> Dimension #{dimensionInfo.xDimension}<br />
+            <strong>{axisLabels.y}-axis:</strong> Dimension #{dimensionInfo.yDimension}<br />
+            <strong>{axisLabels.z}-axis:</strong> Dimension #{dimensionInfo.zDimension}
           </p>
         </div>
       )}

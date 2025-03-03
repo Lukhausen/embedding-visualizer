@@ -6,6 +6,7 @@ import './App.css'
 function App() {
   const [words, setWords] = useState([])
   const [algorithm, setAlgorithm] = useState('pca')
+  const [axisLabels, setAxisLabels] = useState({ x: "X", y: "Y", z: "Z" })
   const visualizerRef = useRef(null)
 
   const handleWordsChange = useCallback((newWords) => {
@@ -18,11 +19,27 @@ function App() {
     localStorage.setItem('selected-dimension-algorithm', newAlgorithm)
   }, [])
   
-  // Load saved algorithm choice when component mounts
+  const handleAxisLabelsChange = useCallback((newLabels) => {
+    setAxisLabels(newLabels)
+    // Save the axis labels to localStorage
+    localStorage.setItem('axis-labels', JSON.stringify(newLabels))
+  }, [])
+  
+  // Load saved algorithm choice and axis labels when component mounts
   useEffect(() => {
     const savedAlgorithm = localStorage.getItem('selected-dimension-algorithm')
     if (savedAlgorithm) {
       setAlgorithm(savedAlgorithm)
+    }
+    
+    const savedAxisLabels = localStorage.getItem('axis-labels')
+    if (savedAxisLabels) {
+      try {
+        const parsedLabels = JSON.parse(savedAxisLabels)
+        setAxisLabels(parsedLabels)
+      } catch (error) {
+        console.error('Failed to parse saved axis labels:', error)
+      }
     }
   }, [])
   
@@ -41,12 +58,15 @@ function App() {
         words={words} 
         onWordsChange={handleWordsChange}
         selectedAlgorithm={algorithm}
-        onAlgorithmChange={handleAlgorithmChange} 
+        onAlgorithmChange={handleAlgorithmChange}
+        axisLabels={axisLabels}
+        onAxisLabelsChange={handleAxisLabelsChange}
       />
       <EmbeddingVisualizer 
         words={words} 
         onFocusChanged={handleVisualizerRef}
         algorithmId={algorithm}
+        axisLabels={axisLabels}
       />
     </div>
   )

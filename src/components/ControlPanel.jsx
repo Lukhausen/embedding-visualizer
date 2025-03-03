@@ -1,13 +1,14 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { FaChevronLeft, FaChevronRight, FaList, FaKey, FaCube } from 'react-icons/fa'
+import { FaChevronLeft, FaChevronRight, FaList, FaKey, FaCube, FaTags } from 'react-icons/fa'
 import ApiKeyManager from './ApiKeyManager'
 import WordListManager from './WordListManager'
 import DimensionReductionSelector from './DimensionReductionSelector'
+import AxisLabelManager from './AxisLabelManager'
 import './ControlPanel.css'
 
-function ControlPanel({ words, onWordsChange, selectedAlgorithm, onAlgorithmChange }) {
+function ControlPanel({ words, onWordsChange, selectedAlgorithm, onAlgorithmChange, axisLabels, onAxisLabelsChange }) {
   const [isCollapsed, setIsCollapsed] = useState(false)
-  const [activeTab, setActiveTab] = useState('words') // 'words', 'settings', or 'dimensions'
+  const [activeTab, setActiveTab] = useState('words') // 'words', 'settings', 'dimensions', or 'axisLabels'
   
   // Check if panel state was saved previously - run only once
   useEffect(() => {
@@ -57,6 +58,12 @@ function ControlPanel({ words, onWordsChange, selectedAlgorithm, onAlgorithmChan
     }
   }, [onAlgorithmChange]);
   
+  const handleAxisLabelsChange = useCallback((newLabels) => {
+    if (onAxisLabelsChange) {
+      onAxisLabelsChange(newLabels);
+    }
+  }, [onAxisLabelsChange]);
+  
   return (
     <div className={`control-panel ${isCollapsed ? 'collapsed' : ''}`}>
       <div className="control-panel-tabs">
@@ -79,6 +86,15 @@ function ControlPanel({ words, onWordsChange, selectedAlgorithm, onAlgorithmChan
           <span className="tab-label">Dimensions</span>
         </button>
         <button 
+          className={`tab-button ${activeTab === 'axisLabels' ? 'active' : ''}`}
+          onClick={() => changeTab('axisLabels')}
+          aria-label="Axis Labels"
+          title="Customize Axis Labels"
+        >
+          <FaTags size={20} />
+          <span className="tab-label">Axis Labels</span>
+        </button>
+        <button 
           className={`tab-button ${activeTab === 'settings' ? 'active' : ''}`}
           onClick={() => changeTab('settings')}
           aria-label="API Settings"
@@ -99,6 +115,10 @@ function ControlPanel({ words, onWordsChange, selectedAlgorithm, onAlgorithmChan
             ) : activeTab === 'dimensions' ? (
               <>
                 <FaCube /> Dimension Reduction
+              </>
+            ) : activeTab === 'axisLabels' ? (
+              <>
+                <FaTags /> Axis Labels
               </>
             ) : (
               <>
@@ -133,6 +153,17 @@ function ControlPanel({ words, onWordsChange, selectedAlgorithm, onAlgorithmChan
             <DimensionReductionSelector
               selectedAlgorithm={selectedAlgorithm}
               onChange={handleAlgorithmChange}
+            />
+          </div>
+        )}
+        
+        {activeTab === 'axisLabels' && (
+          <div className="tab-content">
+            <AxisLabelManager
+              axisLabels={axisLabels}
+              onAxisLabelsChange={handleAxisLabelsChange}
+              algorithmId={selectedAlgorithm}
+              words={words}
             />
           </div>
         )}
