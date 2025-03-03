@@ -1,24 +1,87 @@
 /**
- * Principal Component Analysis (PCA) Algorithm
+ * EMBEDDING VISUALIZER PLUGIN SYSTEM
+ * ==================================
  * 
- * A simplified implementation of PCA for dimension reduction.
+ * This file demonstrates how to create a dimension reduction algorithm plugin.
+ * The embedding visualizer uses a plugin system that makes it easy to add new
+ * dimension reduction algorithms with zero configuration.
  * 
- * 🔹 What it does:
- *    PCA finds the main patterns in your high-dimensional data and squishes it down 
- *    while keeping the most important information.
- *    It finds the directions (called principal components) where the data varies the most 
- *    and projects it onto those.
+ * ## HOW THE PLUGIN SYSTEM WORKS
  * 
- * 🔹 Example:
- *    Imagine you have 100-dimensional data about different cars (like weight, engine size, 
- *    fuel consumption, etc.). PCA finds the most important 2 features that explain most of 
- *    the differences between cars and gives you a 2D version of the data.
+ * 1. Each plugin is a single JavaScript file in the algorithms/ directory
+ * 2. The system automatically discovers and registers all plugins in this directory
+ * 3. Each plugin must export an object as its default export with the required interface
+ * 4. Once registered, the algorithm appears in the UI dropdown for users to select
  * 
- * 🔹 How to add your own algorithm:
- *    1. Create a new file in this directory (e.g., myAlgorithm.js)
- *    2. Copy this structure but implement your own reduction logic
- *    3. Export your algorithm as the default export
- *    4. That's it! The system will automatically discover and register your algorithm
+ * ## CREATING A NEW PLUGIN
+ * 
+ * To create a new dimension reduction algorithm:
+ * 
+ * 1. Create a new file in the src/services/dimensionReduction/algorithms/ directory
+ *    Example: myNewAlgorithm.js
+ * 
+ * 2. Copy this template and modify it with your algorithm implementation:
+ * 
+ *    ```javascript
+ *    const myAlgorithm = {
+ *      // A unique identifier (no spaces, use camelCase)
+ *      id: 'myUniqueAlgorithmId',
+ *      
+ *      // Display name shown in the UI
+ *      name: 'My New Algorithm',
+ *      
+ *      // Brief description of how your algorithm works (shown in UI)
+ *      description: 'This algorithm maps embeddings to 3D space by...',
+ *      
+ *      // The main algorithm implementation
+ *      reduce: function(embeddings) {
+ *        if (!embeddings || embeddings.length === 0) {
+ *          return null;
+ *        }
+ *        
+ *        // Your algorithm logic goes here
+ *        // ...
+ *        
+ *        // Return required data structure
+ *        return {
+ *          // Three dimension indices to use for x, y, z coordinates
+ *          indices: [0, 1, 2],
+ *          
+ *          // Min values for each selected dimension (for scaling)
+ *          minValues: [min1, min2, min3],
+ *          
+ *          // Max values for each selected dimension (for scaling)
+ *          maxValues: [max1, max2, max3],
+ *          
+ *          // Metadata (automatically added but good to include explicitly)
+ *          name: this.name,
+ *          description: this.description
+ *        };
+ *      }
+ *    };
+ *    
+ *    export default myAlgorithm;
+ *    ```
+ * 
+ * 3. That's it! Your algorithm will be automatically discovered and registered.
+ *    No manual registration is required.
+ * 
+ * ## IMPLEMENTATION REQUIREMENTS
+ * 
+ * Your algorithm must:
+ * 
+ * - Have a unique `id` property (string, no spaces)
+ * - Have a user-friendly `name` property (shown in the UI)
+ * - Have a `description` property explaining how it works
+ * - Implement a `reduce(embeddings)` function that:
+ *   - Takes an array of embedding vectors as input
+ *   - Returns an object with indices, minValues, maxValues properties
+ * 
+ * ## HOW PLUGINS ARE DISCOVERED
+ * 
+ * The system uses Vite's import.meta.glob feature to automatically find and
+ * register all algorithm files in the algorithms/ directory. This dynamic
+ * import means you don't need to manually register your algorithm anywhere.
  */
 
 const pcaAlgorithm = {

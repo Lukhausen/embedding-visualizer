@@ -1,98 +1,170 @@
-# Dimension Reduction Module
+# Embedding Visualizer Plugin System
 
-This module provides a modular and extensible system for reducing high-dimensional embedding vectors to 3D coordinates for visualization purposes.
+This module provides a flexible plugin system for creating dimension reduction algorithms in the Embedding Visualizer. The system is designed to be as straightforward as possible, allowing you to add new visualization algorithms with minimal effort.
 
-## Architecture
+## Plugin System Overview
 
-The dimension reduction module is organized as follows:
+The plugin system follows these principles:
 
-- `index.js`: Main entry point that exports the public API
-- `algorithmRegistry.js`: Manages the automatic discovery and registration of algorithms
-- `algorithmBase.js`: Defines the interface that all algorithms should implement
-- `algorithms/`: Directory containing individual algorithm implementations
-  - Each algorithm is in its own file with a consistent structure
+- **Zero Configuration**: Add a new plugin by simply creating a file in the correct directory
+- **Auto-Discovery**: Plugins are automatically discovered and registered
+- **Modular Design**: Each algorithm is isolated in its own file
+- **Simple Interface**: Implement a single function and export an object
 
-## Available Algorithm
+## How to Create a New Plugin
 
-Currently, the system includes one algorithm:
+Creating a new dimension reduction algorithm is simple:
 
-### Principal Component Analysis (PCA)
+### Step 1: Create a New File
 
-🔹 **What it does:**
-- PCA finds the main patterns in your high-dimensional data and squishes it down while keeping the most important information
-- It finds the directions (called principal components) where the data varies the most and projects the data onto those
+Create a new JavaScript file in the `src/services/dimensionReduction/algorithms/` directory:
 
-🔹 **Example:**
-Imagine you have 100-dimensional data about different cars (like weight, engine size, fuel consumption, etc.).
-PCA finds the most important 2 features that explain most of the differences between cars and gives you a 2D version of the data.
+```
+src/services/dimensionReduction/algorithms/myNewAlgorithm.js
+```
 
-## Adding Your Own Algorithm
+### Step 2: Implement Your Algorithm
 
-Adding a new dimension reduction algorithm is extremely simple:
-
-1. Create a new file in the `algorithms/` directory (e.g., `algorithms/myNewAlgorithm.js`)
-2. Implement the algorithm following the structure in the existing PCA file
-3. Export it as the default export
-
-**That's it!** The algorithm registry will automatically discover and register your algorithm.
-
-### Example Algorithm Structure
+Copy and paste this template into your new file and customize it:
 
 ```javascript
-const myNewAlgorithm = {
-  // Unique identifier for the algorithm
-  id: 'myUniqueAlgorithmId',
+const myAlgorithm = {
+  // Required: Unique identifier (camelCase, no spaces)
+  id: 'myAlgorithmId',
   
-  // Display name shown in UI
+  // Required: Display name shown in UI
   name: 'My New Algorithm',
   
-  // Description of what the algorithm does
-  description: 'This algorithm does something cool with embeddings',
+  // Required: Description shown in UI
+  description: 'This algorithm works by... [brief explanation]',
   
-  // The actual reduction function
+  // Required: The core implementation
   reduce: function(embeddings) {
     if (!embeddings || embeddings.length === 0) {
       return null;
     }
-
-    // Your algorithm implementation here
+    
+    // Your algorithm logic here
     // ...
-
-    // Return required values
+    
+    // For example, select dimensions 0, 1, 2 for visualization
+    const selectedDimensions = [0, 1, 2];
+    
+    // Calculate min/max values for scaling
+    const minValues = [Infinity, Infinity, Infinity];
+    const maxValues = [-Infinity, -Infinity, -Infinity];
+    
+    for (const embedding of embeddings) {
+      for (let i = 0; i < 3; i++) {
+        const value = embedding[selectedDimensions[i]];
+        minValues[i] = Math.min(minValues[i], value);
+        maxValues[i] = Math.max(maxValues[i], value);
+      }
+    }
+    
+    // Return required structure
     return {
-      indices: [0, 1, 2], // The three dimension indices to map to x, y, z
-      minValues: [min1, min2, min3], // Min values for each dimension for scaling
-      maxValues: [max1, max2, max3], // Max values for each dimension for scaling
-      name: this.name,
-      description: this.description
+      indices: selectedDimensions,  // Which dimensions to use for X, Y, Z
+      minValues,                    // Min values for scaling
+      maxValues,                    // Max values for scaling
+      name: this.name,              // Algorithm name
+      description: this.description // Algorithm description
     };
   }
 };
 
-export default myNewAlgorithm;
+export default myAlgorithm;
 ```
 
-## How Auto-Discovery Works
+### Step 3: That's It!
 
-The system uses Vite's `import.meta.glob` feature to automatically scan the `algorithms/` directory for all JavaScript files. Each file is expected to export an algorithm object as its default export. The registry automatically imports and registers all algorithms it finds.
+Your algorithm will be automatically discovered and will appear in the dropdown in the UI. No manual registration is required.
 
-This means you can add new algorithms simply by adding new files to the directory - no manual registration required!
+## Example Algorithm Types
 
-## API Reference
+Here are some examples of algorithms you might implement:
 
-### Main Exports
+### 1. Fixed Dimension Selection
 
-- `getAvailableAlgorithms()`: Returns an array of all registered algorithms
-- `applyDimensionReduction(embeddings, algorithmId)`: Applies a specific algorithm to embeddings
-- `getCoordinatesFromEmbedding(embedding, reductionResult)`: Maps an embedding to 3D coordinates
-- `getDimensionInfo(reductionResult)`: Gets info about which dimensions are being used
-- `registerAlgorithm(algorithm)`: Registers a new algorithm at runtime (rarely needed since auto-discovery handles this)
+Map specific embedding dimensions to X, Y, Z coordinates:
 
-### Algorithm Interface
+```javascript
+reduce: function(embeddings) {
+  // Always use dimensions 5, 10, 15 for visualization
+  const indices = [5, 10, 15];
+  // ...calculate min/max values
+  return { indices, minValues, maxValues, name: this.name, description: this.description };
+}
+```
 
-Each algorithm should implement:
+### 2. Statistical Selection
 
-- `id`: String identifier (required)
-- `name`: Display name (required)
-- `description`: Short description of the algorithm (required)
-- `reduce(embeddings)`: Function that implements the dimension reduction (required) 
+Select dimensions based on statistical properties:
+
+```javascript
+reduce: function(embeddings) {
+  // Find dimensions with highest variance
+  const variances = calculateVariances(embeddings);
+  const indices = findTopThreeIndices(variances);
+  // ...calculate min/max values
+  return { indices, minValues, maxValues, name: this.name, description: this.description };
+}
+```
+
+### 3. Mathematical Transformations
+
+Apply mathematical transformations to create new dimensions:
+
+```javascript
+reduce: function(embeddings) {
+  // Create weighted combinations of dimensions
+  const transformed = embeddings.map(e => [
+    calculateWeightedCombination(e, weights1),
+    calculateWeightedCombination(e, weights2),
+    calculateWeightedCombination(e, weights3)
+  ]);
+  // ...calculate indices, min/max values
+  return { indices: [0, 1, 2], minValues, maxValues, name: this.name, description: this.description };
+}
+```
+
+## Plugin API Reference
+
+### Required Properties
+
+Every algorithm must provide:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `id` | String | Unique identifier (camelCase, no spaces) |
+| `name` | String | User-friendly display name |
+| `description` | String | Brief explanation of how it works |
+| `reduce` | Function | Implementation function |
+
+### Reduce Function
+
+The `reduce` function must:
+
+1. Accept an array of embedding vectors as its only parameter
+2. Return an object with the following properties:
+   - `indices`: Array of 3 indices mapping to X, Y, Z dimensions
+   - `minValues`: Array of 3 min values for scaling
+   - `maxValues`: Array of 3 max values for scaling
+   - `name`: Algorithm name
+   - `description`: Algorithm description
+
+## Under the Hood
+
+The auto-discovery mechanism uses Vite's `import.meta.glob` to scan the algorithms directory and import all JS files. Each algorithm is registered with the `algorithmRegistry` in `algorithmRegistry.js`.
+
+When users select an algorithm in the UI, the system:
+
+1. Looks up the algorithm by ID
+2. Calls its `reduce` function with the current embeddings
+3. Uses the returned dimensions to render the visualization
+
+## Need Help?
+
+- Check out the example in `pca.js`
+- See the interface template in `algorithmBase.js`
+- Contact the project maintainers for assistance 

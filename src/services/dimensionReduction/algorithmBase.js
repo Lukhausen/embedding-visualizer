@@ -1,58 +1,90 @@
 /**
- * Base structure for dimension reduction algorithms
+ * EMBEDDING VISUALIZER ALGORITHM TEMPLATE
+ * =======================================
  * 
- * This file defines the interface that all dimension reduction algorithms should implement.
- * Each algorithm file should export an object following this structure.
+ * This file provides a template interface for creating new dimension reduction algorithms.
+ * Use this as a reference when implementing your own algorithms.
  */
 
 /**
- * Example algorithm structure - each algorithm file should export an object like this
+ * ALGORITHM TEMPLATE - Copy this structure when creating a new algorithm
  */
-export const algorithmExample = {
+export const algorithmTemplate = {
   /**
-   * Unique identifier for the algorithm
-   * Should be a string with no spaces, using camelCase
+   * REQUIRED: Unique identifier for the algorithm
+   * - Use camelCase
+   * - No spaces or special characters
+   * - This ID is used in URLs and for persistent storage
    */
-  id: 'uniqueAlgorithmId',
+  id: 'myUniqueAlgorithmId',
 
   /**
-   * Display name for the algorithm shown in the UI
+   * REQUIRED: Display name shown in the UI
+   * - User-friendly name that appears in the dropdown
+   * - Can include spaces and special characters
    */
-  name: 'Algorithm Display Name',
+  name: 'My Algorithm Name',
 
   /**
-   * Brief description of how the algorithm works
+   * REQUIRED: Brief description explaining how the algorithm works
+   * - Shown in the UI when the algorithm is selected
+   * - Should be concise but informative
+   * - Can include markdown formatting
    */
-  description: 'Description of what this algorithm does',
+  description: 'This algorithm reduces dimensions by...',
 
   /**
-   * The reduce function that implements the dimension reduction logic
+   * REQUIRED: The core algorithm implementation
    * 
-   * @param {Array<Array<number>>} embeddings - Array of embedding vectors
-   * @returns {Object} Object containing indices, minValues, maxValues, name, and description
+   * @param {Array<Array<number>>} embeddings - Array of embedding vectors to process
+   * @returns {Object} Object with required dimension mapping properties
    */
   reduce: function(embeddings) {
+    // Input validation (always include this)
     if (!embeddings || embeddings.length === 0) {
       return null;
     }
 
-    // Algorithm implementation goes here
-    // ...
+    // --------------------------------------------------
+    // YOUR ALGORITHM IMPLEMENTATION GOES HERE
+    // --------------------------------------------------
+    
+    // Just a placeholder example - replace with your logic
+    const dimensions = embeddings[0].length;
+    const selectedIndices = [0, 1, 2]; // Select which dimensions to use for X, Y, Z
+    
+    // Find min/max values for normalization
+    const minValues = [Infinity, Infinity, Infinity];
+    const maxValues = [-Infinity, -Infinity, -Infinity];
+    
+    // Calculate min/max for each selected dimension
+    for (const embedding of embeddings) {
+      for (let i = 0; i < 3; i++) {
+        const value = embedding[selectedIndices[i]];
+        minValues[i] = Math.min(minValues[i], value);
+        maxValues[i] = Math.max(maxValues[i], value);
+      }
+    }
 
-    // Return structure should include:
+    // --------------------------------------------------
+    // REQUIRED RETURN FORMAT:
+    // --------------------------------------------------
     return {
-      // The three dimension indices to use (required)
-      indices: [0, 1, 2],
+      // REQUIRED: Which dimensions to map to X, Y, Z (indices into the embedding vectors)
+      indices: selectedIndices,
       
-      // Min values for each dimension for scaling (required)
-      minValues: [0, 0, 0],
+      // REQUIRED: Minimum values for each selected dimension (for scaling)
+      minValues: minValues,
       
-      // Max values for each dimension for scaling (required)
-      maxValues: [1, 1, 1],
+      // REQUIRED: Maximum values for each selected dimension (for scaling) 
+      maxValues: maxValues,
       
-      // Algorithm name and description (automatically added by the registry)
+      // REQUIRED: Algorithm metadata (automatically included by registry)
       name: this.name,
       description: this.description
+      
+      // OPTIONAL: You can include additional metadata if needed
+      // customData: { ... }
     };
   }
 }; 
