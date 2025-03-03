@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { FaChevronLeft, FaChevronRight, FaList, FaKey } from 'react-icons/fa'
 import ApiKeyManager from './ApiKeyManager'
 import WordListManager from './WordListManager'
@@ -8,9 +8,8 @@ function ControlPanel({ onWordsChange }) {
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [activeTab, setActiveTab] = useState('words') // 'words' or 'settings'
   const [words, setWords] = useState([])
-  const wordsManagerRef = useRef(null)
   
-  // Check if panel state was saved previously
+  // Check if panel state was saved previously - run only once
   useEffect(() => {
     const savedCollapsedState = localStorage.getItem('control-panel-collapsed')
     if (savedCollapsedState !== null) {
@@ -21,19 +20,7 @@ function ControlPanel({ onWordsChange }) {
     if (savedActiveTab) {
       setActiveTab(savedActiveTab)
     }
-    
-    // Load saved words from localStorage on component mount
-    const savedWords = localStorage.getItem('embedding-words')
-    if (savedWords) {
-      try {
-        const parsedWords = JSON.parse(savedWords)
-        setWords(parsedWords)
-        onWordsChange?.(parsedWords)
-      } catch (error) {
-        console.error('Error parsing saved words:', error)
-      }
-    }
-  }, [onWordsChange])
+  }, [])
   
   // Save panel state when it changes
   useEffect(() => {
@@ -44,11 +31,11 @@ function ControlPanel({ onWordsChange }) {
     localStorage.setItem('control-panel-active-tab', activeTab)
   }, [activeTab])
   
-  const toggleCollapse = () => {
-    setIsCollapsed(!isCollapsed)
-  }
+  const toggleCollapse = useCallback(() => {
+    setIsCollapsed(prev => !prev)
+  }, [])
   
-  const changeTab = (tab) => {
+  const changeTab = useCallback((tab) => {
     if (activeTab === tab && !isCollapsed) {
       // If clicking the active tab and panel is open, collapse it
       setIsCollapsed(true)
@@ -57,12 +44,15 @@ function ControlPanel({ onWordsChange }) {
       setActiveTab(tab)
       setIsCollapsed(false)
     }
-  }
+  }, [activeTab, isCollapsed])
   
-  const handleWordsChange = (newWords) => {
+  const handleWordsChange = useCallback((newWords) => {
     setWords(newWords)
-    onWordsChange?.(newWords)
-  }
+    // Only notify parent if the array has actually changed
+    if (JSON.stringify(newWords) !== JSON.stringify(words)) {
+      onWordsChange?.(newWords)
+    }
+  }, [words, onWordsChange])
   
   return (
     <div className={`control-panel ${isCollapsed ? 'collapsed' : ''}`}>
