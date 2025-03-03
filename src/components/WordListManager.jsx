@@ -22,10 +22,8 @@ function WordListManager({ onWordsChange, initialWords = [] }) {
         const parsedWords = JSON.parse(savedWords)
         if (Array.isArray(parsedWords) && parsedWords.length > 0) {
           setWordsWithEmbeddings(parsedWords)
-          // Also notify parent to ensure sync
-          if (onWordsChange) {
-            onWordsChange(parsedWords.map(item => item.text))
-          }
+          // Move this notification to its own effect so it happens after render
+          // Don't call onWordsChange here
         } else if (initialWords && initialWords.length > 0) {
           // If no saved words but initial words provided
           const initialWordsWithEmbeddings = initialWords.map(item => {
@@ -53,6 +51,13 @@ function WordListManager({ onWordsChange, initialWords = [] }) {
     }
   }, []) // Run only once on mount
 
+  // Add a new effect to handle notifying the parent after initialization
+  useEffect(() => {
+    if (isInitialized && onWordsChange) {
+      onWordsChange(wordsWithEmbeddings.map(item => item.text))
+    }
+  }, [isInitialized, onWordsChange, wordsWithEmbeddings])
+
   // Save to localStorage when words change, but only after initialization
   useEffect(() => {
     if (!isInitialized) return;
@@ -62,12 +67,7 @@ function WordListManager({ onWordsChange, initialWords = [] }) {
     } catch (error) {
       console.error('Error saving words to localStorage:', error)
     }
-    
-    // Notify parent component with just the text values
-    if (onWordsChange) {
-      onWordsChange(wordsWithEmbeddings.map(item => item.text))
-    }
-  }, [wordsWithEmbeddings, onWordsChange, isInitialized])
+  }, [wordsWithEmbeddings, isInitialized]);
 
   // Handle input change
   const handleInputChange = useCallback((e) => {
@@ -97,7 +97,10 @@ function WordListManager({ onWordsChange, initialWords = [] }) {
       
       if (!apiKey) {
         toast.warning('No API key found. Please add your OpenAI API key in settings.')
-        setWordsWithEmbeddings(prev => [...prev, { text: wordToAdd, embedding: null }])
+        const newWordsList = [...wordsWithEmbeddings, { text: wordToAdd, embedding: null }];
+        setWordsWithEmbeddings(newWordsList)
+        // Notify parent with updated words list
+        onWordsChange?.(newWordsList.map(item => item.text))
         setInputValue('')
         setError('')
         return
@@ -112,7 +115,10 @@ function WordListManager({ onWordsChange, initialWords = [] }) {
           toast.info(`"${wordToAdd}" was already added while waiting for embedding.`)
           return prev;
         }
-        return [...prev, { text: wordToAdd, embedding }]
+        const newList = [...prev, { text: wordToAdd, embedding }];
+        // Notify parent with updated words list
+        onWordsChange?.(newList.map(item => item.text))
+        return newList;
       })
       
       toast.success(`"${wordToAdd}" added with embedding successfully!`)
@@ -126,14 +132,17 @@ function WordListManager({ onWordsChange, initialWords = [] }) {
         if (prev.some(item => item.text === wordToAdd)) {
           return prev;
         }
-        return [...prev, { text: wordToAdd, embedding: null }]
+        const newList = [...prev, { text: wordToAdd, embedding: null }];
+        // Notify parent with updated words list
+        onWordsChange?.(newList.map(item => item.text))
+        return newList;
       })
     } finally {
       setLoading(false)
       setInputValue('')
       setError('')
     }
-  }, [inputValue, wordsWithEmbeddings]);
+  }, [inputValue, wordsWithEmbeddings, onWordsChange]);
 
   // Rest of your existing functions with useCallback
   const handleKeyDown = useCallback((e) => {
@@ -214,6 +223,37 @@ function WordListManager({ onWordsChange, initialWords = [] }) {
     // Determine whether to use sorted or original data
     const dataToRender = selectedEmbedding?.sortedData || embedding.map((value, index) => ({ value, index }));
     
+    // Find the maximum absolute value for scaling the visualization
+    const maxMagnitude = Math.max(...dataToRender.map(item => Math.abs(item.value)));
+    
+    const renderValueBar = (value) => {
+      const absValue = Math.abs(value);
+      const percentage = (absValue / maxMagnitude) * 50; // 50% of width (to allow for centering)
+      const isPositive = value >= 0;
+      
+      return (
+        <div className="value-visualization">
+          <div className="value-text">{value.toFixed(6)}</div>
+          <div className="value-bar-container">
+            <div className="center-marker"></div>
+            {isPositive ? (
+              <div 
+                className="value-bar positive" 
+                style={{ width: `${percentage}%`, left: '50%' }} 
+                title={`Positive: ${value.toFixed(6)}`}
+              />
+            ) : (
+              <div 
+                className="value-bar negative" 
+                style={{ width: `${percentage}%`, right: '50%' }} 
+                title={`Negative: ${value.toFixed(6)}`}
+              />
+            )}
+          </div>
+        </div>
+      );
+    };
+    
     if (embedding.length > 50) {
       // For large embeddings, show with pagination or limited view
       return (
@@ -223,7 +263,7 @@ function WordListManager({ onWordsChange, initialWords = [] }) {
             {dataToRender.slice(0, 100).map((item) => (
               <div key={item.index} className="embedding-row">
                 <span className="dimension">[{item.index}]:</span>
-                <span className="value">{item.value.toFixed(6)}</span>
+                {renderValueBar(item.value)}
               </div>
             ))}
             {embedding.length > 100 && (
@@ -243,7 +283,7 @@ function WordListManager({ onWordsChange, initialWords = [] }) {
           {dataToRender.map((item) => (
             <div key={item.index} className="embedding-row">
               <span className="dimension">[{item.index}]:</span>
-              <span className="value">{item.value.toFixed(6)}</span>
+              {renderValueBar(item.value)}
             </div>
           ))}
         </div>

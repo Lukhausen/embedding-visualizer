@@ -565,4 +565,91 @@
   .embedding-modal-fullscreen .embedding-ellipsis {
     color: rgba(0, 0, 0, 0.5);
   }
+}
+
+/* Value visualization styles */
+.value-visualization {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.value-text {
+  font-family: monospace;
+  margin-bottom: 3px;
+}
+
+.value-bar-container {
+  height: 10px;
+  background-color: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+  margin-bottom: 6px;
+}
+
+.center-marker {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  height: 100%;
+  width: 1px;
+  background-color: rgba(255, 255, 255, 0.2);
+  z-index: 1;
+}
+
+.value-bar {
+  height: 100%;
+  position: absolute;
+  top: 0;
+  transition: width 0.2s ease-out;
+}
+
+.value-bar.positive {
+  background: linear-gradient(90deg, #4fc3f7 0%, #2196f3 100%);
+  left: 50%;
+}
+
+.value-bar.negative {
+  background: linear-gradient(90deg, #e53935 0%, #f44336 100%);
+  right: 50%;
+}
+
+.embedding-table {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 15px;
+  width: 100%;
+}
+
+.embedding-row {
+  display: contents;
+}
+
+.dimension {
+  color: #64b5f6;
+  text-align: right;
+  padding-right: 10px;
+  padding-top: 3px;
+  min-width: 80px;
+  align-self: start;
+}
+
+/* Light mode adjustments */
+@media (prefers-color-scheme: light) {
+  .value-bar-container {
+    background-color: rgba(0, 0, 0, 0.05);
+  }
+  
+  .center-marker {
+    background-color: rgba(0, 0, 0, 0.2);
+  }
+  
+  .value-bar.positive {
+    background: linear-gradient(90deg, #29b6f6 0%, #1976d2 100%);
+  }
+  
+  .value-bar.negative {
+    background: linear-gradient(90deg, #e53935 0%, #c62828 100%);
+  }
 } 

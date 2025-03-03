@@ -9,7 +9,14 @@ export default [
     files: ['**/*.{js,jsx}'],
     languageOptions: {
       ecmaVersion: 2020,
-      globals: globals.browser,
+      globals: {
+        ...globals.browser,
+        THREE: 'readonly',
+        window: 'writable',
+        document: 'writable',
+        console: 'writable',
+        import: 'readonly'
+      },
       parserOptions: {
         ecmaVersion: 'latest',
         ecmaFeatures: { jsx: true },
@@ -23,11 +30,21 @@ export default [
     rules: {
       ...js.configs.recommended.rules,
       ...reactHooks.configs.recommended.rules,
-      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+      'no-unused-vars': ['error', { 
+        varsIgnorePattern: '^[A-Z_]',
+        argsIgnorePattern: '^_'
+      }],
       'react-refresh/only-export-components': [
         'warn',
         { allowConstantExport: true },
       ],
+      // Rules to help with Three.js development
+      'no-restricted-imports': ['error', {
+        patterns: [{
+          group: ['three/src/*'],
+          message: 'Import from "three" instead of internal paths to avoid duplicate instances.'
+        }]
+      }],
     },
   },
 ]

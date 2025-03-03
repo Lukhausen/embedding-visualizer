@@ -1,0 +1,56 @@
+.embedding-visualizer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 0;
+}
+
+.visualizer-overlay {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  z-index: 10;
+  padding: 12px;
+  background-color: rgba(0, 0, 0, 0.7);
+  color: white;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: monospace;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(4px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.debug-info {
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  padding-top: 8px;
+  margin-top: 5px;
+  font-size: 12px;
+  color: #4caf50;
+}
+
+@media (prefers-color-scheme: dark) {
+  .embedding-visualizer {
+    background-color: #1a1a1a;
+  }
+  
+  .visualizer-overlay {
+    background-color: rgba(0, 0, 0, 0.7);
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+}
+
+@media (prefers-color-scheme: light) {
+  .embedding-visualizer {
+    background-color: #f5f5f5;
+  }
+  
+  .visualizer-overlay {
+    background-color: rgba(0, 0, 0, 0.7);
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+} 

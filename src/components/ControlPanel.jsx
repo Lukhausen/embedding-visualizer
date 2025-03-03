@@ -4,10 +4,9 @@ import ApiKeyManager from './ApiKeyManager'
 import WordListManager from './WordListManager'
 import './ControlPanel.css'
 
-function ControlPanel({ onWordsChange }) {
+function ControlPanel({ words, onWordsChange }) {
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [activeTab, setActiveTab] = useState('words') // 'words' or 'settings'
-  const [words, setWords] = useState([])
   
   // Check if panel state was saved previously - run only once
   useEffect(() => {
@@ -47,12 +46,10 @@ function ControlPanel({ onWordsChange }) {
   }, [activeTab, isCollapsed])
   
   const handleWordsChange = useCallback((newWords) => {
-    setWords(newWords)
-    // Only notify parent if the array has actually changed
-    if (JSON.stringify(newWords) !== JSON.stringify(words)) {
-      onWordsChange?.(newWords)
-    }
-  }, [words, onWordsChange])
+    // Only update state and notify parent if the array has actually changed
+    // The JSON.stringify comparison is causing issues because it runs on every render
+    onWordsChange(newWords); // Directly call onWordsChange to update App's state
+  }, [onWordsChange]);
   
   return (
     <div className={`control-panel ${isCollapsed ? 'collapsed' : ''}`}>
@@ -102,8 +99,8 @@ function ControlPanel({ onWordsChange }) {
 
         {activeTab === 'words' && (
           <div className="tab-content">
-            <WordListManager 
-              onWordsChange={handleWordsChange} 
+            <WordListManager
+              onWordsChange={handleWordsChange}
               initialWords={words}
             />
           </div>
