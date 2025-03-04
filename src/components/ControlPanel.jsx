@@ -9,13 +9,16 @@ import './ControlPanel.css'
 
 function ControlPanel({ 
   words, 
+  wordsWithEmbeddings = [],
   onWordsChange, 
   selectedAlgorithm, 
   onAlgorithmChange, 
   axisLabels, 
   onAxisLabelsChange,
+  onAutoAxisLabelsChange,
   textSize,
-  onTextSizeChange
+  onTextSizeChange,
+  labelsPerAxis
 }) {
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [activeTab, setActiveTab] = useState('words') // 'words', 'settings', 'dimensions', 'axisLabels', or 'appSettings'
@@ -57,20 +60,21 @@ function ControlPanel({
     }
   }, [activeTab, isCollapsed])
   
-  const handleWordsChange = useCallback((newWords) => {
-    // Only update state and notify parent if the array has actually changed
-    onWordsChange(newWords); // Directly call onWordsChange to update App's state
+  const handleWordsChange = useCallback((newWords, newWordsWithEmbeddings) => {
+    if (onWordsChange) {
+      onWordsChange(newWords, newWordsWithEmbeddings);
+    }
   }, [onWordsChange]);
   
-  const handleAlgorithmChange = useCallback((algorithmId) => {
+  const handleAlgorithmChange = useCallback((newAlgorithm) => {
     if (onAlgorithmChange) {
-      onAlgorithmChange(algorithmId);
+      onAlgorithmChange(newAlgorithm);
     }
   }, [onAlgorithmChange]);
   
-  const handleAxisLabelsChange = useCallback((newLabels, labelsPerAxis) => {
+  const handleAxisLabelsChange = useCallback((newLabels, newLabelsPerAxis) => {
     if (onAxisLabelsChange) {
-      onAxisLabelsChange(newLabels, labelsPerAxis);
+      onAxisLabelsChange(newLabels, newLabelsPerAxis);
     }
   }, [onAxisLabelsChange]);
   
@@ -164,6 +168,8 @@ function ControlPanel({
             <WordListManager
               onWordsChange={handleWordsChange}
               initialWords={words}
+              wordsWithEmbeddings={wordsWithEmbeddings}
+              algorithmId={selectedAlgorithm}
             />
           </div>
         )}
@@ -187,6 +193,8 @@ function ControlPanel({
               onAxisLabelsChange={handleAxisLabelsChange}
               algorithmId={selectedAlgorithm}
               words={words}
+              wordsWithEmbeddings={wordsWithEmbeddings}
+              labelsPerAxis={labelsPerAxis}
             />
           </div>
         )}

@@ -158,6 +158,70 @@ export const createTextSprite = (text, position, color = '#ffffff', textSize = 1
 };
 
 /**
+ * Creates a custom axes helper with both positive and negative directions
+ * @param {number} size - Length of each axis
+ * @returns {THREE.Group} Group containing all axis lines
+ */
+const createBidirectionalAxesHelper = (size = 2) => {
+  const group = new THREE.Group();
+  
+  // Materials for each axis
+  const xAxisMaterial = new THREE.LineBasicMaterial({ color: 0xff0000 }); // Red for X
+  const yAxisMaterial = new THREE.LineBasicMaterial({ color: 0x00ff00 }); // Green for Y
+  const zAxisMaterial = new THREE.LineBasicMaterial({ color: 0x0000ff }); // Blue for Z
+  
+  // Create positive X axis
+  const posXGeometry = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(size, 0, 0)
+  ]);
+  const posXLine = new THREE.Line(posXGeometry, xAxisMaterial);
+  group.add(posXLine);
+  
+  // Create negative X axis
+  const negXGeometry = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(-size, 0, 0)
+  ]);
+  const negXLine = new THREE.Line(negXGeometry, xAxisMaterial);
+  group.add(negXLine);
+  
+  // Create positive Y axis
+  const posYGeometry = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, size, 0)
+  ]);
+  const posYLine = new THREE.Line(posYGeometry, yAxisMaterial);
+  group.add(posYLine);
+  
+  // Create negative Y axis
+  const negYGeometry = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, -size, 0)
+  ]);
+  const negYLine = new THREE.Line(negYGeometry, yAxisMaterial);
+  group.add(negYLine);
+  
+  // Create positive Z axis
+  const posZGeometry = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 0, size)
+  ]);
+  const posZLine = new THREE.Line(posZGeometry, zAxisMaterial);
+  group.add(posZLine);
+  
+  // Create negative Z axis
+  const negZGeometry = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 0, -size)
+  ]);
+  const negZLine = new THREE.Line(negZGeometry, zAxisMaterial);
+  group.add(negZLine);
+  
+  return group;
+};
+
+/**
  * Sets up a basic scene with axes, labels, grid and lighting
  * 
  * @param {THREE.Scene} scene - The scene to set up
@@ -172,8 +236,8 @@ export const setupBasicScene = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' }, 
   // Store the text size for later updates
   scene.userData.textSize = textSize;
   
-  // Create coordinate axes
-  const axesHelper = new THREE.AxesHelper(2);
+  // Create bidirectional coordinate axes instead of standard AxesHelper
+  const axesHelper = createBidirectionalAxesHelper(2);
   scene.add(axesHelper);
   
   // Add grid helper
@@ -191,24 +255,36 @@ export const setupBasicScene = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' }, 
   
   // Position labels above the axis ends
   const xLabelPos = new THREE.Vector3(2.2, 0.15, 0);
+  const negXLabelPos = new THREE.Vector3(-2.2, 0.15, 0);
   const yLabelPos = new THREE.Vector3(0, 2.2 + 0.15, 0);
+  const negYLabelPos = new THREE.Vector3(0, -2.2 + 0.15, 0);
   const zLabelPos = new THREE.Vector3(0, 0.15, 2.2);
+  const negZLabelPos = new THREE.Vector3(0, 0.15, -2.2);
   
   // Create axis labels
   const xLabel = createTextSprite(axisLabels.x, xLabelPos, '#ff5555', textSize);
+  const negXLabel = createTextSprite('-' + axisLabels.x, negXLabelPos, '#ff5555', textSize);
   const yLabel = createTextSprite(axisLabels.y, yLabelPos, '#55ff55', textSize);
+  const negYLabel = createTextSprite('-' + axisLabels.y, negYLabelPos, '#55ff55', textSize);
   const zLabel = createTextSprite(axisLabels.z, zLabelPos, '#5555ff', textSize);
+  const negZLabel = createTextSprite('-' + axisLabels.z, negZLabelPos, '#5555ff', textSize);
   
   // Add labels to the scene
   scene.add(xLabel);
+  scene.add(negXLabel);
   scene.add(yLabel);
+  scene.add(negYLabel);
   scene.add(zLabel);
+  scene.add(negZLabel);
   
   // Store the labels in scene userData for later updates
   scene.userData.axisLabels = {
     x: xLabel,
+    negX: negXLabel,
     y: yLabel,
-    z: zLabel
+    negY: negYLabel,
+    z: zLabel,
+    negZ: negZLabel
   };
   
   // Setup for additional labels
@@ -226,21 +302,45 @@ export const setupBasicScene = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' }, 
  * @param {Object} dimensionReduction - The dimension reduction result containing embeddings
  * @returns {Boolean} - Whether the update was successful
  */
-export const updateAxisLabels = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' }, textSize, labelsPerAxis = 1, dimensionInfo, dimensionReduction) => {
+export const updateAxisLabels = (scene, axisLabels = { x: "X", y: "Y", z: "Z" }, textSize, labelsPerAxis = 1, dimensionInfo, dimensionReduction) => {
   if (!scene || !scene.userData.axisLabels) {
     return false;
   }
+  
+  // Check if anything has actually changed before doing work
+  const hasLabelsChanged = !scene.userData.currentAxisLabels ||
+    scene.userData.currentAxisLabels.x !== axisLabels.x ||
+    scene.userData.currentAxisLabels.y !== axisLabels.y ||
+    scene.userData.currentAxisLabels.z !== axisLabels.z ||
+    scene.userData.currentAxisLabels.negX !== axisLabels.negX ||
+    scene.userData.currentAxisLabels.negY !== axisLabels.negY ||
+    scene.userData.currentAxisLabels.negZ !== axisLabels.negZ;
+  
+  const hasSettingsChanged = 
+    scene.userData.textSize !== textSize ||
+    scene.userData.labelsPerAxis !== labelsPerAxis;
+  
+  // Skip update if nothing changed
+  if (!hasLabelsChanged && !hasSettingsChanged && !dimensionInfo) {
+    return false;
+  }
+  
+  // Store current values for future reference
+  scene.userData.currentAxisLabels = {...axisLabels};
   
   // Use stored text size if not provided
   const fontSize = textSize !== undefined ? textSize : (scene.userData.textSize || 1);
   
   // Get the stored label sprites
-  const { x: xLabel, y: yLabel, z: zLabel } = scene.userData.axisLabels;
+  const { x: xLabel, negX: negXLabel, y: yLabel, negY: negYLabel, z: zLabel, negZ: negZLabel } = scene.userData.axisLabels;
   
   // Remove old sprites
   scene.remove(xLabel);
+  scene.remove(negXLabel);
   scene.remove(yLabel);
+  scene.remove(negYLabel);
   scene.remove(zLabel);
+  scene.remove(negZLabel);
   
   // Remove any additional labels that might have been added previously
   if (scene.userData.additionalLabels) {
@@ -254,51 +354,104 @@ export const updateAxisLabels = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' },
   
   // Position primary labels above the axis ends
   const xLabelPos = new THREE.Vector3(2.2, 0.15, 0);
+  const negXLabelPos = new THREE.Vector3(-2.2, 0.15, 0);
   const yLabelPos = new THREE.Vector3(0, 2.2 + 0.15, 0);
+  const negYLabelPos = new THREE.Vector3(0, -2.2 + 0.15, 0);
   const zLabelPos = new THREE.Vector3(0, 0.15, 2.2);
+  const negZLabelPos = new THREE.Vector3(0, 0.15, -2.2);
+  
+  // Get negative labels (either from the passed labels or by prefixing the regular labels)
+  const negXText = axisLabels.negX || ('-' + axisLabels.x);
+  const negYText = axisLabels.negY || ('-' + axisLabels.y);
+  const negZText = axisLabels.negZ || ('-' + axisLabels.z);
   
   // Create and add new primary sprites
   const newXLabel = createTextSprite(axisLabels.x, xLabelPos, '#ff5555', fontSize);
+  const newNegXLabel = createTextSprite(negXText, negXLabelPos, '#ff5555', fontSize);
   const newYLabel = createTextSprite(axisLabels.y, yLabelPos, '#55ff55', fontSize);
+  const newNegYLabel = createTextSprite(negYText, negYLabelPos, '#55ff55', fontSize);
   const newZLabel = createTextSprite(axisLabels.z, zLabelPos, '#5555ff', fontSize);
+  const newNegZLabel = createTextSprite(negZText, negZLabelPos, '#5555ff', fontSize);
   
   scene.add(newXLabel);
+  scene.add(newNegXLabel);
   scene.add(newYLabel);
+  scene.add(newNegYLabel);
   scene.add(newZLabel);
+  scene.add(newNegZLabel);
   
-  // Add additional labels if requested and if we have dimension info and reduction data
-  if (labelsPerAxis > 1 && dimensionInfo && dimensionReduction) {
+  // Add additional labels if requested
+  if (labelsPerAxis > 1) {
     try {
-      // Find the most representative words for each dimension
-      const additionalLabels = findTopWordsForDimensions(dimensionReduction, dimensionInfo, labelsPerAxis);
+      // Get additional labels from localStorage (these are the sorted suggestions)
+      const savedAdditionalLabels = localStorage.getItem('axis-additional-labels');
+      let additionalLabels = { 
+        x: [], y: [], z: [], 
+        negX: [], negY: [], negZ: [] 
+      };
       
-      // Add X axis additional labels
+      if (savedAdditionalLabels) {
+        try {
+          additionalLabels = JSON.parse(savedAdditionalLabels);
+        } catch (e) {
+          console.error('Error parsing additional labels:', e);
+        }
+      }
+      
+      // Add X axis additional labels (positive direction)
       if (additionalLabels.x && additionalLabels.x.length) {
-        additionalLabels.x.forEach((label, index) => {
-          if (index === 0) return; // Skip the first one as it's already the primary label
-          const position = new THREE.Vector3(2.2 - (index * 0.4), 0.15, 0);
+        additionalLabels.x.slice(0, Math.max(0, labelsPerAxis - 1)).forEach((label, index) => {
+          const position = new THREE.Vector3(2.2 - ((index+1) * 0.4), 0.15, 0);
           const sprite = createTextSprite(label, position, '#ff5555', fontSize * 0.8);
           scene.add(sprite);
           scene.userData.additionalLabels.push(sprite);
         });
       }
       
-      // Add Y axis additional labels
+      // Add X axis additional labels (negative direction)
+      if (additionalLabels.negX && additionalLabels.negX.length) {
+        additionalLabels.negX.slice(0, Math.max(0, labelsPerAxis - 1)).forEach((label, index) => {
+          const position = new THREE.Vector3(-2.2 + ((index+1) * 0.4), 0.15, 0);
+          const sprite = createTextSprite(label, position, '#ff5555', fontSize * 0.8);
+          scene.add(sprite);
+          scene.userData.additionalLabels.push(sprite);
+        });
+      }
+      
+      // Add Y axis additional labels (positive direction)
       if (additionalLabels.y && additionalLabels.y.length) {
-        additionalLabels.y.forEach((label, index) => {
-          if (index === 0) return; // Skip the first one as it's already the primary label
-          const position = new THREE.Vector3(0, 2.2 + 0.15 - (index * 0.4), 0);
+        additionalLabels.y.slice(0, Math.max(0, labelsPerAxis - 1)).forEach((label, index) => {
+          const position = new THREE.Vector3(0, 2.2 + 0.15 - ((index+1) * 0.4), 0);
           const sprite = createTextSprite(label, position, '#55ff55', fontSize * 0.8);
           scene.add(sprite);
           scene.userData.additionalLabels.push(sprite);
         });
       }
       
-      // Add Z axis additional labels
+      // Add Y axis additional labels (negative direction)
+      if (additionalLabels.negY && additionalLabels.negY.length) {
+        additionalLabels.negY.slice(0, Math.max(0, labelsPerAxis - 1)).forEach((label, index) => {
+          const position = new THREE.Vector3(0, -2.2 + 0.15 + ((index+1) * 0.4), 0);
+          const sprite = createTextSprite(label, position, '#55ff55', fontSize * 0.8);
+          scene.add(sprite);
+          scene.userData.additionalLabels.push(sprite);
+        });
+      }
+      
+      // Add Z axis additional labels (positive direction)
       if (additionalLabels.z && additionalLabels.z.length) {
-        additionalLabels.z.forEach((label, index) => {
-          if (index === 0) return; // Skip the first one as it's already the primary label
-          const position = new THREE.Vector3(0, 0.15, 2.2 - (index * 0.4));
+        additionalLabels.z.slice(0, Math.max(0, labelsPerAxis - 1)).forEach((label, index) => {
+          const position = new THREE.Vector3(0, 0.15, 2.2 - ((index+1) * 0.4));
+          const sprite = createTextSprite(label, position, '#5555ff', fontSize * 0.8);
+          scene.add(sprite);
+          scene.userData.additionalLabels.push(sprite);
+        });
+      }
+      
+      // Add Z axis additional labels (negative direction)
+      if (additionalLabels.negZ && additionalLabels.negZ.length) {
+        additionalLabels.negZ.slice(0, Math.max(0, labelsPerAxis - 1)).forEach((label, index) => {
+          const position = new THREE.Vector3(0, 0.15, -2.2 + ((index+1) * 0.4));
           const sprite = createTextSprite(label, position, '#5555ff', fontSize * 0.8);
           scene.add(sprite);
           scene.userData.additionalLabels.push(sprite);
@@ -310,42 +463,17 @@ export const updateAxisLabels = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' },
   }
   
   // Store the new labels in scene userData
-  scene.userData.axisLabels = { x: newXLabel, y: newYLabel, z: newZLabel };
+  scene.userData.axisLabels = { 
+    x: newXLabel, 
+    negX: newNegXLabel,
+    y: newYLabel, 
+    negY: newNegYLabel,
+    z: newZLabel, 
+    negZ: newNegZLabel 
+  };
   scene.userData.textSize = fontSize;
   
   return true;
-}
-
-/**
- * Finds the most representative words for each dimension
- * 
- * @param {Object} dimensionReduction - The dimension reduction result
- * @param {Object} dimensionInfo - Information about the dimensions being displayed
- * @param {Number} count - Number of words to find per dimension
- * @returns {Object} - Object containing arrays of top words for each axis
- */
-const findTopWordsForDimensions = (dimensionReduction, dimensionInfo, count) => {
-  if (!dimensionReduction || !dimensionReduction.wordObjects || !dimensionInfo) {
-    return { x: [], y: [], z: [] };
-  }
-  
-  const { wordObjects } = dimensionReduction;
-  const { xDimension, yDimension, zDimension } = dimensionInfo;
-  
-  // Sort words by their value in each dimension to find the most representative ones
-  const xWords = [...wordObjects].sort((a, b) => {
-    return Math.abs(b.embedding[xDimension]) - Math.abs(a.embedding[xDimension]);
-  }).slice(0, count).map(obj => obj.text);
-  
-  const yWords = [...wordObjects].sort((a, b) => {
-    return Math.abs(b.embedding[yDimension]) - Math.abs(a.embedding[yDimension]);
-  }).slice(0, count).map(obj => obj.text);
-  
-  const zWords = [...wordObjects].sort((a, b) => {
-    return Math.abs(b.embedding[zDimension]) - Math.abs(a.embedding[zDimension]);
-  }).slice(0, count).map(obj => obj.text);
-  
-  return { x: xWords, y: yWords, z: zWords };
 }
 
 /**

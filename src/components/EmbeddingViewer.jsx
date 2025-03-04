@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { FaSortAmountDown, FaSortAmountUp, FaTh, FaTimes } from 'react-icons/fa';
+import { useState, useRef, useEffect } from 'react';
+import { FaSortAmountDown, FaSortAmountUp, FaSearch, FaTimes } from 'react-icons/fa';
 import './EmbeddingViewer.css';
 
 /**
@@ -15,31 +15,96 @@ import './EmbeddingViewer.css';
 function EmbeddingViewer({ embedding, word, isMinimal = false, onClose }) {
   // State for sorting the embedding data
   const [selectedEmbedding, setSelectedEmbedding] = useState(null);
-  const [sortDirection, setSortDirection] = useState('desc'); // Default to showing highest magnitude first
+  const [sortMode, setSortMode] = useState('magnitude-desc'); // Default to showing highest magnitude first
+  
+  // Search functionality
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filteredData, setFilteredData] = useState(null);
+  const [matchCount, setMatchCount] = useState(0);
+  const searchInputRef = useRef(null);
+
+  // Apply search filter when query changes
+  useEffect(() => {
+    if (!embedding || !searchQuery.trim()) {
+      setFilteredData(null);
+      setMatchCount(0);
+      return;
+    }
+
+    // Determine which data to search through
+    const dataToSearch = selectedEmbedding?.sortedData || 
+      embedding.map((value, index) => ({ value, index, magnitude: Math.abs(value) }));
+    
+    // Parse search query
+    const query = searchQuery.trim().toLowerCase();
+    
+    // Check for comparison operators
+    if (query.startsWith('>') || query.startsWith('<')) {
+      const isGreaterThan = query.startsWith('>');
+      const valueStr = query.substring(1).trim();
+      const threshold = parseFloat(valueStr);
+      
+      if (!isNaN(threshold)) {
+        const matches = dataToSearch.filter(item => 
+          isGreaterThan ? item.value > threshold : item.value < threshold
+        );
+        setFilteredData(matches);
+        setMatchCount(matches.length);
+        return;
+      }
+    }
+    
+    // Check for dimension number search (exact or partial)
+    const dimensionMatches = dataToSearch.filter(item => 
+      item.index.toString().includes(query)
+    );
+    
+    // Check for value search
+    const valueMatches = dataToSearch.filter(item => 
+      item.value.toString().includes(query)
+    );
+    
+    // Combine matches without duplicates
+    const allMatches = [...new Set([...dimensionMatches, ...valueMatches])];
+    
+    setFilteredData(allMatches);
+    setMatchCount(allMatches.length);
+  }, [searchQuery, embedding, selectedEmbedding]);
+
+  // Focus search input when in full view
+  useEffect(() => {
+    if (!isMinimal && searchInputRef.current) {
+      // Use a slight delay to allow the modal to render
+      const timer = setTimeout(() => {
+        searchInputRef.current.focus();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [isMinimal]);
 
   // Handle sorting of the embedding data
-  const handleSort = (direction) => {
-    if (sortDirection === direction) {
-      // If already sorted in this direction, remove sorting
+  const handleSort = (mode) => {
+    if (sortMode === mode) {
+      // If already sorted in this mode, remove sorting
       setSelectedEmbedding({
         ...selectedEmbedding,
         sortedData: null
       });
-      setSortDirection(null);
+      setSortMode(null);
     } else {
       // Apply the requested sorting
-      const sortedData = sortEmbedding(embedding, direction);
+      const sortedData = sortEmbedding(embedding, mode);
       setSelectedEmbedding({
         values: embedding,
         sortedData
       });
-      setSortDirection(direction);
+      setSortMode(mode);
     }
   };
 
-  // Sort embedding values based on direction
-  const sortEmbedding = (embedding, direction) => {
-    if (!direction) return null;
+  // Sort embedding values based on sort mode
+  const sortEmbedding = (embedding, mode) => {
+    if (!mode) return null;
     
     // Create pairs of [value, index] to preserve original positions
     const pairs = embedding.map((value, index) => ({ 
@@ -48,14 +113,24 @@ function EmbeddingViewer({ embedding, word, isMinimal = false, onClose }) {
       magnitude: Math.abs(value) 
     }));
     
-    // Sort by magnitude (absolute value)
-    pairs.sort((a, b) => {
-      if (direction === 'asc') {
-        return a.magnitude - b.magnitude; // Smallest absolute value first
-      } else {
-        return b.magnitude - a.magnitude; // Largest absolute value first
-      }
-    });
+    // Sort based on selected mode
+    switch (mode) {
+      case 'magnitude-desc':
+        // Sort by magnitude (absolute value), highest first
+        pairs.sort((a, b) => b.magnitude - a.magnitude);
+        break;
+      case 'value-desc':
+        // Sort by actual value, highest first
+        pairs.sort((a, b) => b.value - a.value);
+        break;
+      case 'value-asc':
+        // Sort by actual value, lowest first
+        pairs.sort((a, b) => a.value - b.value);
+        break;
+      default:
+        // No sorting
+        return null;
+    }
     
     return pairs;
   };
@@ -96,8 +171,8 @@ function EmbeddingViewer({ embedding, word, isMinimal = false, onClose }) {
     }
 
     // Apply sort on first render if not already sorted
-    if (!selectedEmbedding && sortDirection) {
-      const sortedData = sortEmbedding(embedding, sortDirection);
+    if (!selectedEmbedding && sortMode) {
+      const sortedData = sortEmbedding(embedding, sortMode);
       setSelectedEmbedding({
         values: embedding,
         sortedData
@@ -105,7 +180,12 @@ function EmbeddingViewer({ embedding, word, isMinimal = false, onClose }) {
     }
 
     // Determine whether to use sorted or original data
-    const dataToRender = selectedEmbedding?.sortedData || embedding.map((value, index) => ({ value, index }));
+    let dataToRender = selectedEmbedding?.sortedData || embedding.map((value, index) => ({ value, index }));
+    
+    // If we have filtered data from search, use that instead
+    if (filteredData && filteredData.length > 0) {
+      dataToRender = filteredData;
+    }
     
     // Find the maximum absolute value for scaling the visualization
     const maxMagnitude = Math.max(...dataToRender.map(item => Math.abs(item.value)));
@@ -114,7 +194,16 @@ function EmbeddingViewer({ embedding, word, isMinimal = false, onClose }) {
       // For large embeddings, show with pagination or limited view
       return (
         <div className="embedding-data">
-          <p>Vector of {embedding.length} dimensions</p>
+          <div className="search-status">
+            {searchQuery.trim() ? (
+              <p>
+                {matchCount} matching {matchCount === 1 ? 'dimension' : 'dimensions'} 
+                {filteredData && filteredData.length > 100 ? ' (showing first 100)' : ''}
+              </p>
+            ) : (
+              <p>Vector of {embedding.length} dimensions{dataToRender.length > 100 ? ' (showing first 100)' : ''}</p>
+            )}
+          </div>
           <div className="embedding-table">
             {dataToRender.slice(0, 100).map((item) => (
               <div key={`dim-${item.index}`} className="embedding-row">
@@ -122,10 +211,10 @@ function EmbeddingViewer({ embedding, word, isMinimal = false, onClose }) {
                 {renderValueBar(item.value, maxMagnitude)}
               </div>
             ))}
-            {embedding.length > 100 && (
+            {dataToRender.length > 100 && (
               <div className="embedding-row">
                 <div className="embedding-ellipsis">
-                  ...and {embedding.length - 100} more values
+                  ...and {dataToRender.length - 100} more values
                 </div>
               </div>
             )}
@@ -143,7 +232,7 @@ function EmbeddingViewer({ embedding, word, isMinimal = false, onClose }) {
                 {renderValueBar(item.value, maxMagnitude)}
               </div>
             ))}
-            {embedding.length > 10 && (
+            {dataToRender.length > 10 && (
               <div className="embedding-row">
                 <div className="embedding-ellipsis">...</div>
               </div>
@@ -192,36 +281,54 @@ function EmbeddingViewer({ embedding, word, isMinimal = false, onClose }) {
       <div className="embedding-modal-fullscreen" onClick={e => e.stopPropagation()}>
         <div className="embedding-modal-header">
           <h3>Embedding for "{word}"</h3>
+          
+          <div className="embedding-search">
+            <div className="search-input-container">
+              <FaSearch className="search-icon" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search dimension (e.g. 42, >0.5, <-0.3)"
+                className="dimension-search-input"
+              />
+              {searchQuery && (
+                <button 
+                  className="clear-search-button"
+                  onClick={() => setSearchQuery('')}
+                  title="Clear search"
+                >
+                  <FaTimes />
+                </button>
+              )}
+            </div>
+          </div>
+          
           <div className="embedding-controls">
             <button 
-              className={`sort-button ${sortDirection === 'desc' ? 'active' : ''}`}
-              onClick={() => handleSort('desc')}
-              title="Sort by highest magnitude"
+              className={`sort-button ${sortMode === 'magnitude-desc' ? 'active' : ''}`}
+              onClick={() => handleSort('magnitude-desc')}
+              title="Sort by highest absolute value"
             >
               <FaSortAmountDown />
               <span>Highest |x|</span>
             </button>
             <button 
-              className={`sort-button ${sortDirection === 'asc' ? 'active' : ''}`}
-              onClick={() => handleSort('asc')}
-              title="Sort by lowest magnitude"
+              className={`sort-button ${sortMode === 'value-desc' ? 'active' : ''}`}
+              onClick={() => handleSort('value-desc')}
+              title="Sort by highest value"
             >
-              <FaSortAmountUp />
-              <span>Lowest |x|</span>
+              <FaSortAmountDown />
+              <span>Highest x</span>
             </button>
             <button 
-              className={`sort-button ${sortDirection === null ? 'active' : ''}`}
-              onClick={() => {
-                setSelectedEmbedding({
-                  ...selectedEmbedding,
-                  sortedData: null
-                });
-                setSortDirection(null);
-              }}
-              title="Original order"
+              className={`sort-button ${sortMode === 'value-asc' ? 'active' : ''}`}
+              onClick={() => handleSort('value-asc')}
+              title="Sort by lowest value"
             >
-              <FaTh />
-              <span>Original</span>
+              <FaSortAmountUp />
+              <span>Lowest x</span>
             </button>
             <button className="close-modal-button" onClick={() => onClose && onClose()}>
               <FaTimes />

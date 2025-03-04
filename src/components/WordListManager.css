@@ -172,20 +172,6 @@
   margin-top: 10px;
 }
 
-.toggle-list-button {
-  position: fixed;
-  top: 10px;
-  left: 10px;
-  z-index: 100;
-  padding: 8px 12px;
-  background-color: #2196f3;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 14px;
-}
-
 /* Embedding modal styles */
 .embedding-modal-overlay {
   position: fixed;
@@ -319,10 +305,6 @@
   
   .word-item:hover {
     background-color: rgba(255, 255, 255, 0.1);
-  }
-  
-  .toggle-list-button {
-    background-color: #0d47a1;
   }
 }
 

@@ -236,6 +236,17 @@ const EmbeddingVisualizer = forwardRef(({
       setDimensionReduction(null)
       setDimensionInfo(null)
     }
+
+    // When dimension reduction changes, let AxisLabelManager know
+    if (dimensionInfo && dimensionReduction) {
+      // Store the dimension info in localStorage so other components can access it
+      localStorage.setItem('current-dimension-info', JSON.stringify({
+        xDimension: dimensionInfo.xDimension,
+        yDimension: dimensionInfo.yDimension,
+        zDimension: dimensionInfo.zDimension,
+        algorithm: dimensionInfo.algorithm
+      }));
+    }
   }, [words, algorithmId])
 
   // Regenerate points when embeddings change
@@ -261,11 +272,24 @@ const EmbeddingVisualizer = forwardRef(({
     
   }, [dimensionReduction, words, textSize]) // Re-run when textSize changes
 
-  // Update axis labels when they change
+  // Update axis labels when they change - simplified version
   useEffect(() => {
-    if (!sceneRef.current) return
+    if (!sceneRef.current) return;
     
-    updateAxisLabels(sceneRef.current, axisLabels, textSize, labelsPerAxis, dimensionInfo, dimensionReduction);
+    // Always update labels to ensure consistency
+    updateAxisLabels(
+      sceneRef.current, 
+      axisLabels, 
+      textSize, 
+      labelsPerAxis, 
+      dimensionInfo, 
+      dimensionReduction
+    );
+    
+    // Trigger a re-render
+    if (rendererRef.current && cameraRef.current) {
+      rendererRef.current.render(sceneRef.current, cameraRef.current);
+    }
   }, [axisLabels, textSize, labelsPerAxis, dimensionInfo, dimensionReduction]);
 
   // Helper function to create word labels with adjustable size

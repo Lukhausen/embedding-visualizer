@@ -460,4 +460,131 @@
   .embedding-modal-fullscreen .embedding-ellipsis {
     color: #777;
   }
+}
+
+/* Add these styles to your EmbeddingViewer.css file */
+
+.embedding-search {
+  display: flex;
+  align-items: center;
+  margin: 0 1rem;
+  flex: 1;
+}
+
+.search-input-container {
+  position: relative;
+  width: 100%;
+  max-width: 400px;
+}
+
+.search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #888;
+  font-size: 0.9rem;
+}
+
+.dimension-search-input {
+  width: 100%;
+  padding: 8px 12px 8px 34px;
+  border: 1px solid #444;
+  border-radius: 4px;
+  background-color: #2a2a2a;
+  color: #ddd;
+  font-size: 0.9rem;
+  transition: all 0.2s ease;
+}
+
+.dimension-search-input:focus {
+  outline: none;
+  border-color: #4a6fa5;
+  box-shadow: 0 0 0 2px rgba(74, 111, 165, 0.3);
+  background-color: #333;
+}
+
+.clear-search-button {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 50%;
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
+.clear-search-button:hover {
+  color: #ddd;
+  background-color: #444;
+}
+
+.search-status {
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+  color: #aaa;
+}
+
+.search-status p {
+  margin: 0;
+}
+
+/* Handle responsive layout */
+@media (max-width: 768px) {
+  .embedding-modal-header {
+    flex-direction: column;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  
+  .embedding-search {
+    width: 100%;
+    margin: 5px 0;
+  }
+  
+  .search-input-container {
+    max-width: 100%;
+  }
+  
+  .embedding-controls {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+/* Light theme support */
+@media (prefers-color-scheme: light) {
+  .dimension-search-input {
+    background-color: #f5f5f5;
+    border-color: #ccc;
+    color: #333;
+  }
+  
+  .dimension-search-input:focus {
+    border-color: #4a88da;
+    background-color: white;
+    box-shadow: 0 0 0 2px rgba(74, 136, 218, 0.2);
+  }
+  
+  .search-icon {
+    color: #777;
+  }
+  
+  .clear-search-button {
+    color: #777;
+  }
+  
+  .clear-search-button:hover {
+    color: #333;
+    background-color: #eee;
+  }
+  
+  .search-status {
+    color: #666;
+  }
 } 

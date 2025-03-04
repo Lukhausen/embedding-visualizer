@@ -1,10 +1,19 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef, forwardRef, useImperativeHandle } from 'react';
 import { toast } from 'react-toastify';
-import { FaTable, FaTags, FaRobot, FaList, FaLayerGroup, FaSearch } from 'react-icons/fa';
+import { FaTable, FaSortAmountDown, FaSortAmountUp, FaSync } from 'react-icons/fa';
+import { saveAxisLabels, loadLabelsPerAxis } from '../services/axisLabelService';
+import { generateAxisLabelIdeas, loadAxisLabelIdeas, saveAxisLabelIdeas } from '../services/axisLabelIdeasService';
+import { 
+  analyzeEmbeddingsForAxisLabels, 
+  loadAxisLabelEmbeddings, 
+  saveAxisLabelEmbeddings,
+  refreshLabelsFromCache
+} from '../services/embeddingAnalysisService';
+import { generateAxisLabelsWorkflow } from '../services/axisLabelGenerationWorkflow';
 import { getEmbedding } from '../services/openaiService';
-import { getDimensionInfo } from '../services/dimensionReduction';
 import EmbeddingViewer from './EmbeddingViewer';
 import './AxisLabelManager.css';
+import { sortSuggestionsByAxisDimension } from '../services/sortingService';
 
 /**
  * Component for managing the labels of the X, Y, and Z axes
@@ -14,656 +23,751 @@ import './AxisLabelManager.css';
  * @param {Function} props.onAxisLabelsChange - Callback when axis labels change
  * @param {String} props.algorithmId - The current dimension reduction algorithm ID
  * @param {Array} props.words - The current words being visualized
+ * @param {Array} props.wordsWithEmbeddings - Words with their embeddings
  * @returns {JSX.Element} The component
  */
-function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabelsChange, algorithmId, words = [] }) {
+const AxisLabelManager = forwardRef(({ 
+  axisLabels = { x: "X", y: "Y", z: "Z" }, 
+  onAxisLabelsChange, 
+  algorithmId, 
+  words = [],
+  wordsWithEmbeddings = []
+}, ref) => {
+  // Axis labels state
   const [labels, setLabels] = useState(axisLabels);
-  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
-  const [suggestions, setSuggestions] = useState([]);
-  const [suggestionsWithEmbeddings, setSuggestionsWithEmbeddings] = useState([]);
+  const [labelsPerAxis, setLabelsPerAxis] = useState(() => loadLabelsPerAxis());
+  
+  // AI generation controls
   const [iterationCount, setIterationCount] = useState(1);
-  const [currentIteration, setCurrentIteration] = useState(0);
-  const [findingBestLabels, setFindingBestLabels] = useState(false);
-  const [findingProgress, setFindingProgress] = useState(0);
-  const [totalSuggestions, setTotalSuggestions] = useState(0);
-  const [suggestionsProgress, setSuggestionsProgress] = useState(0);
-  const [selectedEmbedding, setSelectedEmbedding] = useState(null);
   const [outputsPerPrompt, setOutputsPerPrompt] = useState(30);
-  const [labelsPerAxis, setLabelsPerAxis] = useState(1);
+  
+  // Suggestions state with ref for stable access
+  const [suggestions, setSuggestions] = useState([]);
+  const [displayedSuggestions, setDisplayedSuggestions] = useState([]);
+  const suggestionsRef = useRef([]);
+  
+  // Embeddings state
+  const [suggestionEmbeddings, setSuggestionEmbeddings] = useState(new Map());
+  const [selectedEmbedding, setSelectedEmbedding] = useState(null);
+  const [dimensionIndices, setDimensionIndices] = useState(null);
+  
+  // Sorting state
+  const [sortingBy, setSortingBy] = useState(null); // null, 'x', 'y', 'z'
+  const [sortDirection, setSortDirection] = useState('desc'); // 'asc', 'desc'
+  
+  // Processing state
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingStage, setProcessingStage] = useState(0); // 0: idle, 1: getting ideas, 2: rating ideas
+  const [progress, setProgress] = useState(0);
+  const [currentIteration, setCurrentIteration] = useState(0);
+  const [totalItems, setTotalItems] = useState(0);
+  const [completedItems, setCompletedItems] = useState(0);
 
-  // Apply default labels on first render if none provided
+  // Load saved suggestions and embeddings on mount
   useEffect(() => {
-    if (!axisLabels) {
-      setLabels({ x: "X", y: "Y", z: "Z" });
-    } else {
+    // Load suggestions
+    const savedSuggestions = loadAxisLabelIdeas();
+    if (savedSuggestions && savedSuggestions.length > 0) {
+      setSuggestions(savedSuggestions);
+      setDisplayedSuggestions(savedSuggestions);
+      suggestionsRef.current = savedSuggestions;
+    }
+    
+    // Load embeddings
+    const savedEmbeddings = loadAxisLabelEmbeddings();
+    if (savedEmbeddings && savedEmbeddings.length > 0) {
+      // Convert array to Map for quick lookup
+      const embeddingsMap = new Map();
+      savedEmbeddings.forEach(item => {
+        if (item.text && item.embedding) {
+          embeddingsMap.set(item.text, item.embedding);
+        }
+      });
+      setSuggestionEmbeddings(embeddingsMap);
+    }
+    
+    // Try to load dimension indices from localStorage
+    try {
+      const storedDimensionInfo = localStorage.getItem('current-dimension-info');
+      if (storedDimensionInfo) {
+        const parsedInfo = JSON.parse(storedDimensionInfo);
+        if (parsedInfo.xDimension !== undefined && 
+            parsedInfo.yDimension !== undefined && 
+            parsedInfo.zDimension !== undefined) {
+          setDimensionIndices({
+            x: parsedInfo.xDimension,
+            y: parsedInfo.yDimension,
+            z: parsedInfo.zDimension
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error loading dimension indices:', error);
+    }
+  }, []);
+
+  // Keep suggestions ref in sync with state
+  useEffect(() => {
+    suggestionsRef.current = suggestions;
+  }, [suggestions]);
+  
+  // Update displayed suggestions when sorting changes
+  useEffect(() => {
+    sortSuggestions();
+  }, [sortingBy, sortDirection, suggestions, suggestionEmbeddings]);
+
+  // Save embeddings to localStorage when they change
+  useEffect(() => {
+    if (suggestionEmbeddings.size > 0) {
+      // Convert Map to array for storage
+      const embeddingsArray = Array.from(suggestionEmbeddings.entries()).map(
+        ([text, embedding]) => ({ text, embedding })
+      );
+      saveAxisLabelEmbeddings(embeddingsArray);
+    }
+  }, [suggestionEmbeddings]);
+
+  // Initialize with provided axis labels
+  useEffect(() => {
+    if (axisLabels) {
       setLabels(axisLabels);
     }
   }, [axisLabels]);
 
   // Handle changes to axis labels
-  const handleLabelChange = (axis, value) => {
+  const handleLabelChange = useCallback((axis, value) => {
     const newLabels = { ...labels, [axis]: value };
     setLabels(newLabels);
-    
-    // Notify parent component of the change
-    if (onAxisLabelsChange) {
-      onAxisLabelsChange(newLabels, labelsPerAxis);
-    }
-  };
+    saveAxisLabels(newLabels, labelsPerAxis);
+  }, [labels, labelsPerAxis]);
 
-  // Update parent whenever labelsPerAxis changes
+  // Save labels and labelsPerAxis to localStorage when they change
   useEffect(() => {
-    if (onAxisLabelsChange) {
-      onAxisLabelsChange(labels, labelsPerAxis);
-    }
-  }, [labelsPerAxis, onAxisLabelsChange, labels]);
+    saveAxisLabels(labels, labelsPerAxis);
+  }, [labelsPerAxis, labels]);
 
-  const fetchSuggestions = async (wordList, formattedWordList, apiKey, existingSuggestions = [], outputCount = 10) => {
-    // Create OpenAI client
-    const OpenAI = (await import('openai')).default;
-    const openai = new OpenAI({
-      apiKey: apiKey,
-      dangerouslyAllowBrowser: true
-    });
-
-    // Make API request
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          "role": "system",
-          "content": [
-            {
-              "type": "text",
-              "text": `Your task is to find descriptive adjectives or characteristics that can describe the following words on a 3-dimensional coordinate system.\n\nWords to find characteristics for: ${formattedWordList}\n\nThe idea is to plot those words in a 3d coordinate system using those characteristics. Generate exactly ${outputCount} diverse and unique characteristics that are different from these: ${existingSuggestions.join(', ')}.`
-            }
-          ]
-        },
-        {
-          "role": "assistant",
-          "content": [],
-          "tool_calls": [
-            {
-              "id": "call_RZNoQKpIXcdGX8sIyq5zCipa",
-              "type": "function",
-              "function": {
-                "name": "input_unique_words",
-                "arguments": `{\"words\": ${JSON.stringify(wordList)}}`
-              }
-            },
-            {
-              "id": "call_tkBcCT38lUCgfSVOMdReprua",
-              "type": "function",
-              "function": {
-                "name": "input_unique_words",
-                "arguments": `{\"words\": ${JSON.stringify(wordList)}}`
-              }
-            }
-          ]
-        },
-        {
-          "role": "tool",
-          "content": [
-            {
-              "type": "text",
-              "text": ""
-            }
-          ],
-          "tool_call_id": "call_RZNoQKpIXcdGX8sIyq5zCipa"
-        },
-        {
-          "role": "tool",
-          "content": [
-            {
-              "type": "text",
-              "text": ""
-            }
-          ],
-          "tool_call_id": "call_tkBcCT38lUCgfSVOMdReprua"
-        }
-      ],
-      response_format: {
-        "type": "text"
-      },
-      tools: [
-        {
-          "type": "function",
-          "function": {
-            "name": "input_unique_words",
-            "description": "Takes as input a list of unique words",
-            "parameters": {
-              "type": "object",
-              "required": [
-                "words"
-              ],
-              "properties": {
-                "words": {
-                  "type": "array",
-                  "description": "List of unique words",
-                  "items": {
-                    "type": "string",
-                    "description": "A unique word"
-                  }
-                }
-              },
-              "additionalProperties": false
-            },
-            "strict": true
-          }
-        }
-      ],
-      tool_choice: {
-        "type": "function",
-        "function": {
-          "name": "input_unique_words"
-        }
-      },
-      temperature: 1,
-      max_completion_tokens: 2048,
-      top_p: 1,
-      frequency_penalty: 0,
-      presence_penalty: 0
-    });
-
-    // Log the response for debugging - only in development mode
-    if (process.env.NODE_ENV === 'development' && false) { // Disabled by default
-      console.log(`Iteration ${currentIteration + 1} response:`, response);
-    }
-    
-    // Extract suggestions from response
-    if (response.choices && response.choices[0] && response.choices[0].message && response.choices[0].message.tool_calls) {
-      const toolCalls = response.choices[0].message.tool_calls;
+  // Check for embedding updates
+  useEffect(() => {
+    const checkForEmbeddingUpdates = () => {
+      const embeddingsUpdated = localStorage.getItem('embeddings-updated');
       
-      if (toolCalls.length > 0 && toolCalls[0].function && toolCalls[0].function.arguments) {
-        try {
-          const argumentsJSON = toolCalls[0].function.arguments;
-          const parsedArguments = JSON.parse(argumentsJSON);
-          const suggestionWords = parsedArguments.words;
-
-          if (Array.isArray(suggestionWords)) {
-            return suggestionWords;
-          }
-        } catch (error) {
-          console.error('Failed to parse function arguments JSON:', error);
+      if (embeddingsUpdated === 'true' && suggestionsRef.current.length > 0 && !isProcessing) {
+        // Clear the flag
+        localStorage.removeItem('embeddings-updated');
+        
+        // If we have suggestions and algorithm ID, find best labels automatically
+        if (algorithmId) {
+          toast.info('Embeddings updated. Recalculating best axis labels...');
+          setTimeout(() => {
+            findBestLabels();
+          }, 500);
         }
       }
+    };
+    
+    // Check on mount and when processing state changes
+    checkForEmbeddingUpdates();
+    
+    // Set up an interval to periodically check for updates
+    const intervalId = setInterval(checkForEmbeddingUpdates, 2000);
+    
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [isProcessing, algorithmId]);
+
+  // Simplify the dimension indices update
+  useEffect(() => {
+    if (!algorithmId) return;
+    
+    // Update dimension indices only when algorithm changes
+    try {
+      const storedDimensionInfo = localStorage.getItem('current-dimension-info');
+      if (storedDimensionInfo) {
+        const parsedInfo = JSON.parse(storedDimensionInfo);
+        if (parsedInfo.algorithm === algorithmId && 
+            parsedInfo.xDimension !== undefined && 
+            parsedInfo.yDimension !== undefined && 
+            parsedInfo.zDimension !== undefined) {
+          setDimensionIndices({
+            x: parsedInfo.xDimension,
+            y: parsedInfo.yDimension,
+            z: parsedInfo.zDimension
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error updating dimension indices:', error);
+    }
+  }, [algorithmId]);
+
+  /**
+   * Sort suggestions based on current sortingBy and sortDirection
+   */
+  const sortSuggestions = useCallback(() => {
+    if (!sortingBy || !suggestionEmbeddings.size) {
+      setDisplayedSuggestions(suggestions);
+      return;
+    }
+
+    // Use the externalized sorting function
+    const sorted = sortSuggestionsByAxisDimension(
+      suggestions,
+      suggestionEmbeddings,
+      sortingBy,
+      sortDirection
+    );
+    
+    setDisplayedSuggestions(sorted);
+  }, [sortingBy, sortDirection, suggestions, suggestionEmbeddings]);
+  
+  /**
+   * Handle clicking on a sort button
+   */
+  const handleSort = useCallback((axis) => {
+    if (sortingBy === axis) {
+      // Toggle direction if already sorting by this axis
+      setSortDirection(prev => prev === 'desc' ? 'asc' : 'desc');
+    } else {
+      // Set new axis and reset to descending
+      setSortingBy(axis);
+      setSortDirection('desc');
+    }
+  }, [sortingBy]);
+
+  /**
+   * Analyze embeddings to find the best axis labels
+   */
+  const findBestLabels = useCallback(async () => {
+    // Get current suggestions from ref to ensure latest state
+    const currentSuggestions = suggestionsRef.current;
+    
+    // Check if we have suggestions
+    if (!currentSuggestions || currentSuggestions.length === 0) {
+      toast.warning('No suggestions available. Generate suggestions first.');
+      return false;
     }
     
-    return []; // Return empty array if something went wrong
-  };
-
-  const getWordSuggestions = async () => {
-    // Get API key from localStorage
-    const apiKey = localStorage.getItem('openai-api-key');
-    if (!apiKey) {
-      toast.error('Please add your OpenAI API key in settings first');
-      return;
-    }
-
-    // Get words from localStorage
-    const savedWords = localStorage.getItem('embedding-words');
-    if (!savedWords) {
-      toast.warning('No words found. Please add some words first.');
-      return;
-    }
-
+    // Set up state for stage 2
+    setProcessingStage(2);
+    setProgress(0);
+    setTotalItems(currentSuggestions.length);
+    setCompletedItems(0);
+    
+    // Create toast for tracking progress
+    const toastId = toast.info(`Stage 2/2: Getting embeddings for ${currentSuggestions.length} suggestions...`, {
+      autoClose: false,
+      closeButton: false
+    });
+    
     try {
-      setLoadingSuggestions(true);
-      setCurrentIteration(0);
-      setSuggestionsProgress(0);
-      // Set the total number of suggestion requests
-      setTotalSuggestions(iterationCount);
+      // Make sure we have a valid algorithm ID
+      if (!algorithmId) {
+        toast.error('No dimension reduction algorithm specified');
+        return false;
+      }
       
-      // Parse words from localStorage
-      const parsedWords = JSON.parse(savedWords);
-      const wordList = parsedWords.map(w => w.text);
-      const formattedWordList = wordList.join(', ');
-      
-      // Initialize accumulated suggestions
-      let allSuggestions = [];
-      
-      // Create a single toast ID for tracking progress
-      const toastId = toast.info(`Getting suggestions (0/${iterationCount} requests completed)...`, {
-        autoClose: false,
-        closeButton: false
-      });
-      
-      // Create an array of promises for concurrent execution
-      const requestPromises = Array.from({ length: iterationCount }, async (_, i) => {
-        try {
-          // Each request gets its own copy of the current accumulated suggestions
-          // to avoid duplicates across concurrent requests
-          const newSuggestions = await fetchSuggestions(
-            wordList, 
-            formattedWordList, 
-            apiKey, 
-            [...allSuggestions], // Pass a copy to prevent race conditions
-            outputsPerPrompt
-          );
-          
-          // Update progress
-          const newProgress = ((i + 1) / iterationCount) * 100;
-          setSuggestionsProgress(newProgress);
-          setCurrentIteration(i + 1);
-          
-          // Update the progress toast
-          toast.update(toastId, {
-            render: `Getting suggestions (${i + 1}/${iterationCount} requests completed)...`
-          });
-          
-          return newSuggestions;
-        } catch (error) {
-          console.error(`Error in request ${i + 1}:`, error);
-          // Still update progress even on error
-          const newProgress = ((i + 1) / iterationCount) * 100;
-          setSuggestionsProgress(newProgress);
-          setCurrentIteration(i + 1);
-          return [];
+      // Use the service to analyze embeddings
+      const result = await analyzeEmbeddingsForAxisLabels({
+        suggestions: currentSuggestions,
+        algorithmId,
+        labelsPerAxis,
+        onProgress: (data) => {
+          setCompletedItems(data.completed || 0);
+          setProgress(data.progress || 0);
         }
       });
-
-      // Wait for all requests to complete concurrently
-      const allResults = await Promise.all(requestPromises);
       
-      // Process all results and combine unique suggestions
-      let totalNewSuggestions = 0;
+      if (!result) {
+        toast.update(toastId, {
+          render: 'Failed to analyze embeddings for axis labels',
+          type: 'error',
+          autoClose: 5000,
+          closeButton: true
+        });
+        return false;
+      }
       
-      allResults.forEach((newSuggestions) => {
-        if (newSuggestions && newSuggestions.length > 0) {
-          // Filter out duplicates (case-insensitive)
-          const uniqueNewSuggestions = newSuggestions.filter(
-            suggestion => !allSuggestions.some(
-              existing => existing.toLowerCase() === suggestion.toLowerCase()
-            )
-          );
-          
-          allSuggestions = [...allSuggestions, ...uniqueNewSuggestions];
-          totalNewSuggestions += uniqueNewSuggestions.length;
-        }
-      });
-
-      // Update the UI with all accumulated suggestions
-      setSuggestions(allSuggestions);
-      setSuggestionsWithEmbeddings(allSuggestions.map(text => ({ text, embedding: null })));
-      
-      // Final update with total count
+      // Update toast to success
       toast.update(toastId, {
-        render: `Found ${allSuggestions.length} unique axis label suggestions!`,
+        render: 'Found optimal axis labels!',
         type: 'success',
         autoClose: 3000,
         closeButton: true
       });
       
-    } catch (error) {
-      console.error('Error getting suggestions:', error);
-      toast.error(`Error: ${error.message}`);
-    } finally {
-      setLoadingSuggestions(false);
-      setCurrentIteration(0);
-      setSuggestionsProgress(0);
-      setTotalSuggestions(0);
-    }
-  };
-
-  const findBestLabels = async () => {
-    // Check if we have suggestions
-    if (suggestions.length === 0) {
-      toast.warning('No suggestions available. Generate suggestions first.');
-      return;
-    }
-
-    // Check if we have words with embeddings
-    const savedWords = localStorage.getItem('embedding-words');
-    if (!savedWords) {
-      toast.warning('No embeddings found. Add some words first.');
-      return;
-    }
-
-    // Get API key
-    const apiKey = localStorage.getItem('openai-api-key');
-    if (!apiKey) {
-      toast.error('Please add your OpenAI API key in settings first');
-      return;
-    }
-
-    setFindingBestLabels(true);
-    setFindingProgress(0);
-    toast.info('Analyzing embeddings to find best axis labels...');
-
-    try {
-      // Get saved embeddings
-      const parsedWords = JSON.parse(savedWords);
-      const wordsWithEmbeddings = parsedWords.filter(w => w.embedding);
-      
-      if (wordsWithEmbeddings.length === 0) {
-        toast.error('No words with embeddings found');
-        return;
-      }
-
-      // Get dimension info to find out which dimensions are used for which axis
-      const embeddings = wordsWithEmbeddings.map(w => w.embedding);
-      
-      const { applyDimensionReduction } = await import('../services/dimensionReduction');
-      const reductionResult = applyDimensionReduction(embeddings, algorithmId);
-      
-      if (!reductionResult || !reductionResult.indices) {
-        toast.error('Could not analyze the current visualization dimensions');
-        return;
+      // Update axis labels
+      if (onAxisLabelsChange) {
+        onAxisLabelsChange(result.bestLabels, labelsPerAxis);
       }
       
-      const [xDimensionIndex, yDimensionIndex, zDimensionIndex] = reductionResult.indices;
-      console.log(`Using dimensions: X=${xDimensionIndex}, Y=${yDimensionIndex}, Z=${zDimensionIndex}`);
-      
-      // Process all suggestions without limiting
-      setTotalSuggestions(suggestions.length);
-      let completedRequests = 0;
-      
-      // Show initial progress
-      toast.info(`Getting embeddings for ${suggestions.length} suggestions...`);
-      
-      // Send all embedding requests in parallel
-      const suggestionPromises = suggestions.map(async (suggestion) => {
-        try {
-          const embedding = await getEmbedding(suggestion, apiKey);
-          completedRequests++;
-          setFindingProgress((completedRequests / suggestions.length) * 100);
-          return { text: suggestion, embedding };
-        } catch (error) {
-          console.error(`Error getting embedding for "${suggestion}":`, error);
-          completedRequests++;
-          setFindingProgress((completedRequests / suggestions.length) * 100);
-          return null;
-        }
+      // Force a DOM update by explicitly triggering the event
+      import('../services/axisLabelService').then(module => {
+        module.triggerAxisLabelsUpdate();
       });
       
-      // Wait for all requests to complete
-      const suggestionResults = await Promise.all(suggestionPromises);
-      const suggestionEmbeddings = suggestionResults.filter(result => result !== null);
+      return true;
+    } catch (error) {
+      console.error('Error finding best labels:', error);
       
-      if (suggestionEmbeddings.length === 0) {
-        toast.error('Could not get embeddings for suggestions');
+      // Update toast to error
+      toast.update(toastId, {
+        render: `Error: ${error.message}`,
+        type: 'error',
+        autoClose: 5000,
+        closeButton: true
+      });
+      
+      return false;
+    } finally {
+      setProcessingStage(0);
+      setProgress(0);
+      setIsProcessing(false);
+    }
+  }, [algorithmId, isProcessing, labelsPerAxis, onAxisLabelsChange]);
+  
+  /**
+   * Get embedding for a specific suggestion and show it in the viewer
+   */
+  const getAndShowEmbedding = useCallback(async (suggestion) => {
+    try {
+      // Check if we already have this embedding
+      if (suggestionEmbeddings.has(suggestion)) {
+        setSelectedEmbedding({
+          word: suggestion,
+          embedding: suggestionEmbeddings.get(suggestion)
+        });
         return;
       }
       
-      // Update our state with the embeddings so we can visualize them
-      setSuggestionsWithEmbeddings(suggestionEmbeddings);
-      
-      // Find the suggestions with the highest value in each dimension
-      let bestXLabelScore = -Infinity;
-      let bestYLabelScore = -Infinity;
-      let bestZLabelScore = -Infinity;
-      let bestXLabel = null;
-      let bestYLabel = null;
-      let bestZLabel = null;
-      
-      // Find the best labels
-      for (const { text, embedding } of suggestionEmbeddings) {
-        const xScore = embedding[xDimensionIndex];
-        const yScore = embedding[yDimensionIndex];
-        const zScore = embedding[zDimensionIndex];
-        
-        const absXScore = Math.abs(xScore);
-        const absYScore = Math.abs(yScore);
-        const absZScore = Math.abs(zScore);
-        
-        if (absXScore > bestXLabelScore) {
-          bestXLabelScore = absXScore;
-          bestXLabel = text;
-        }
-        
-        if (absYScore > bestYLabelScore) {
-          bestYLabelScore = absYScore;
-          bestYLabel = text;
-        }
-        
-        if (absZScore > bestZLabelScore) {
-          bestZLabelScore = absZScore;
-          bestZLabel = text;
-        }
-      }
-      
-      // Update the labels
-      const newLabels = {
-        x: bestXLabel || labels.x,
-        y: bestYLabel || labels.y,
-        z: bestZLabel || labels.z
-      };
-      
-      setLabels(newLabels);
-      if (onAxisLabelsChange) {
-        onAxisLabelsChange(newLabels);
-      }
-      
-      toast.success('Found the best axis labels based on embeddings!');
-      
-    } catch (error) {
-      console.error('Error finding best labels:', error);
-      toast.error(`Error finding best labels: ${error.message}`);
-    } finally {
-      setFindingBestLabels(false);
-      setFindingProgress(0);
-      setTotalSuggestions(0);
-    }
-  };
-
-  // Show embedding viewer for a suggestion
-  const showEmbedding = async (text) => {
-    // Check if we already have the embedding
-    const suggestion = suggestionsWithEmbeddings.find(s => s.text === text);
-    
-    if (suggestion && suggestion.embedding) {
-      // If we already have the embedding, show the full-screen view directly
-      setSelectedEmbedding({ text, embedding: suggestion.embedding });
-    } else {
-      // Otherwise, fetch it and then show full-screen view
-      try {
+      // Get API key
         const apiKey = localStorage.getItem('openai-api-key');
         if (!apiKey) {
           toast.error('Please add your OpenAI API key in settings first');
           return;
         }
         
-        toast.info(`Getting embedding for "${text}"...`);
-        const embedding = await getEmbedding(text, apiKey);
-        
-        // Update our state with the new embedding
-        setSuggestionsWithEmbeddings(prev => {
-          const newState = [...prev];
-          const index = newState.findIndex(s => s.text === text);
-          if (index >= 0) {
-            newState[index] = { ...newState[index], embedding };
-          } else {
-            newState.push({ text, embedding });
+      // Show loading toast
+      toast.info(`Getting embedding for "${suggestion}"...`);
+      
+      // Get the embedding
+      const embedding = await getEmbedding(suggestion, apiKey);
+      
+      // Store the embedding in component state
+      setSuggestionEmbeddings(prev => {
+        const newMap = new Map(prev);
+        newMap.set(suggestion, embedding);
+        return newMap;
+      });
+      
+      // Show the embedding
+      setSelectedEmbedding({
+        word: suggestion,
+        embedding
+      });
+      
+      // The embedding will be saved to localStorage via the useEffect
+      } catch (error) {
+      console.error(`Error getting embedding for "${suggestion}":`, error);
+        toast.error(`Error: ${error.message}`);
+    }
+  }, [suggestionEmbeddings]);
+  
+  /**
+   * Close the embedding viewer
+   */
+  const closeEmbeddingViewer = useCallback(() => {
+    setSelectedEmbedding(null);
+  }, []);
+  
+  /**
+   * Main function to generate and analyze axis labels
+   */
+  const processAxisLabels = useCallback(async () => {
+    if (isProcessing) {
+      return;
+    }
+    
+    if (words.length < 3) {
+      toast.warning('Please add at least 3 words to generate labels');
+      return;
+    }
+    
+    setIsProcessing(true);
+    setProcessingStage(1);
+    setProgress(0);
+    
+    try {
+      // Use the axisLabelGenerationWorkflow
+      const result = await generateAxisLabelsWorkflow({
+        words,
+        algorithmId,
+        iterationCount,
+        outputsPerPrompt,
+        labelsPerAxis,
+        onProgress: (data) => {
+          setProcessingStage(data.stage);
+          setProgress(data.progress);
+          if (data.currentIteration) {
+            setCurrentIteration(data.currentIteration);
           }
-          return newState;
+          if (data.totalItems) {
+            setTotalItems(data.totalItems);
+          }
+          if (data.completedItems) {
+            setCompletedItems(data.completedItems);
+          }
+        },
+        onComplete: (results) => {
+          // Update axis labels in parent component
+          if (onAxisLabelsChange && results && results.bestLabels) {
+            onAxisLabelsChange(results.bestLabels, labelsPerAxis);
+            
+            // Explicitly force a DOM update
+            import('../services/axisLabelService').then(module => {
+              module.triggerAxisLabelsUpdate();
+            });
+            
+            // Show success toast
+            toast.success('Generated and applied optimal axis labels!');
+          }
+        }
+      });
+      
+      if (result) {
+        // Load suggestions to update the UI
+        const savedSuggestions = loadAxisLabelIdeas();
+        if (savedSuggestions && savedSuggestions.length > 0) {
+          setSuggestions(savedSuggestions);
+          setDisplayedSuggestions(savedSuggestions);
+          suggestionsRef.current = savedSuggestions;
+        }
+        
+        // Load embeddings to update the UI
+        const savedEmbeddings = loadAxisLabelEmbeddings();
+        if (savedEmbeddings && savedEmbeddings.length > 0) {
+          const embeddingsMap = new Map();
+          savedEmbeddings.forEach(item => {
+            if (item.text && item.embedding) {
+              embeddingsMap.set(item.text, item.embedding);
+            }
+          });
+          setSuggestionEmbeddings(embeddingsMap);
+        }
+        
+        return true;
+      }
+    } catch (error) {
+      console.error('Error processing axis labels:', error);
+      toast.error(`Error: ${error.message}`);
+    } finally {
+      setIsProcessing(false);
+      setProcessingStage(0);
+      setProgress(0);
+    }
+    
+    return false;
+  }, [words, algorithmId, isProcessing, iterationCount, outputsPerPrompt, labelsPerAxis, onAxisLabelsChange]);
+
+  /**
+   * Get appropriate button text based on current state
+   */
+  const getButtonText = useCallback(() => {
+    if (isProcessing) {
+      if (processingStage === 1) {
+        return `Generating Ideas (${currentIteration}/${iterationCount})...`;
+      } else if (processingStage === 2) {
+        return `Finding Best Matches (${Math.floor(progress)}%)...`;
+      }
+      return 'Processing...';
+    }
+    return 'Generate Axis Labels';
+  }, [isProcessing, processingStage, currentIteration, iterationCount, progress]);
+
+  /**
+   * Get the button class for a sort button
+   */
+  const getSortButtonClass = useCallback((axis) => {
+    if (sortingBy !== axis) return 'sort-button';
+    return `sort-button active ${sortDirection}`;
+  }, [sortingBy, sortDirection]);
+
+  /**
+   * Get the label for a sort button
+   */
+  const getSortButtonLabel = useCallback((axis) => {
+    if (sortingBy !== axis) return `Sort by ${axis.toUpperCase()}`;
+    return `Sort by ${axis.toUpperCase()} (${sortDirection === 'desc' ? 'High → Low' : 'Low → High'})`;
+  }, [sortingBy, sortDirection]);
+
+  /**
+   * Refresh axis labels using cached data (no API calls)
+   */
+  const refreshFromCache = useCallback(async () => {
+    if (isProcessing) {
+      toast.info('Please wait, another operation is in progress');
+      return false;
+    }
+    
+    setIsProcessing(true);
+    
+    try {
+      // Create toast for tracking progress
+      const toastId = toast.info('Refreshing axis labels from cache...', {
+        autoClose: false,
+        closeButton: false
+      });
+      
+      // Import the refreshLabelsFromCache function
+      const result = await refreshLabelsFromCache(algorithmId, labelsPerAxis, (data) => {
+        // This is the onComplete callback
+        if (onAxisLabelsChange && data && data.bestLabels) {
+          onAxisLabelsChange(data.bestLabels, labelsPerAxis);
+        }
+      });
+      
+      if (result) {
+        // Update toast to success
+        toast.update(toastId, {
+          render: 'Axis labels refreshed from cache',
+          type: 'success',
+          autoClose: 2000,
+          closeButton: true
         });
         
-        // Show the full-screen embedding viewer
-        setSelectedEmbedding({ text, embedding });
-      } catch (error) {
-        console.error(`Error getting embedding for "${text}":`, error);
-        toast.error(`Error: ${error.message}`);
+        // Force a DOM update by explicitly triggering the event
+        import('../services/axisLabelService').then(module => {
+          module.triggerAxisLabelsUpdate();
+        });
+        
+        return true;
+      } else {
+        // Update toast to warning
+        toast.update(toastId, {
+          render: 'Could not refresh labels from cache. Try generating new suggestions.',
+          type: 'warning',
+          autoClose: 5000,
+          closeButton: true
+        });
+        
+        return false;
       }
+    } catch (error) {
+      console.error('Error refreshing from cache:', error);
+      
+      // Update toast to error
+      toast.error(`Error refreshing labels: ${error.message}`);
+      
+      return false;
+    } finally {
+      setIsProcessing(false);
     }
-  };
-  
-  // Close the embedding viewer
-  const closeEmbeddingView = () => {
-    setSelectedEmbedding(null);
-  };
+  }, [algorithmId, isProcessing, labelsPerAxis, onAxisLabelsChange]);
+
+  // Expose the refreshFromCache function to parent components via ref
+  useImperativeHandle(ref, () => ({
+    refreshLabelsFromCache: refreshFromCache,
+    generateAxisLabels: processAxisLabels
+  }), [refreshFromCache, processAxisLabels]);
 
   return (
     <div className="axis-labels-container">
       <div className="axis-label-description">
-        <p>Name each axis in your 3D visualization.</p>
+        <p>Set labels for each axis to give meaning to the 3D visualization.</p>
       </div>
       
-      <div className="axis-label-inputs">
+      <div className="axis-labels-input-container">
+        <h4>Axis Labels</h4>
+        
         <div className="axis-label-group">
-          <label htmlFor="x-axis-label">X:</label>
+          <label htmlFor="x-axis-label">X-Axis:</label>
           <input
             id="x-axis-label"
             type="text"
+            className="axis-label-input"
             value={labels.x}
             onChange={(e) => handleLabelChange('x', e.target.value)}
-            placeholder="X-Axis"
-            className="axis-label-input"
+            placeholder="X-Axis Label"
           />
         </div>
         
         <div className="axis-label-group">
-          <label htmlFor="y-axis-label">Y:</label>
+          <label htmlFor="y-axis-label">Y-Axis:</label>
           <input
             id="y-axis-label"
             type="text"
+            className="axis-label-input"
             value={labels.y}
             onChange={(e) => handleLabelChange('y', e.target.value)}
-            placeholder="Y-Axis"
-            className="axis-label-input"
+            placeholder="Y-Axis Label"
           />
         </div>
         
         <div className="axis-label-group">
-          <label htmlFor="z-axis-label">Z:</label>
+          <label htmlFor="z-axis-label">Z-Axis:</label>
           <input
             id="z-axis-label"
             type="text"
+            className="axis-label-input"
             value={labels.z}
             onChange={(e) => handleLabelChange('z', e.target.value)}
-            placeholder="Z-Axis"
-            className="axis-label-input"
+            placeholder="Z-Axis Label"
           />
         </div>
       </div>
       
-      <div className="labels-per-axis-control">
-        <div className="control-description">
-          <p>Show multiple words per axis.</p>
-        </div>
-        <div className="control-row">
-          <label htmlFor="labels-per-axis-slider">
-            Words per axis: <span className="labels-per-axis-value">{labelsPerAxis}</span>
-          </label>
-          <input
-            id="labels-per-axis-slider"
-            type="range"
-            min="1"
-            max="5"
-            value={labelsPerAxis}
-            onChange={(e) => setLabelsPerAxis(parseInt(e.target.value))}
-            className="iteration-slider"
-          />
-        </div>
-      </div>
-      
+      {/* AI-based axis label generation */}
       <div className="suggestions-section">
-        <div className="iteration-controls">
-          <div className="iteration-row">
-            <div className="iteration-group">
-              <label htmlFor="iteration-slider">
-                AI requests: <span className="iteration-value">{iterationCount}</span>
-              </label>
-              <input
-                id="iteration-slider"
-                type="range"
-                min="1"
-                max="20"
-                value={iterationCount}
-                onChange={(e) => setIterationCount(parseInt(e.target.value))}
-                className="iteration-slider"
-                disabled={loadingSuggestions || findingBestLabels}
-              />
+        <div className="labels-per-axis-control">
+          <div className="control-description">
+            <p>Number of labels per axis (experimental):</p>
+          </div>
+          <div className="control-row">
+            <label htmlFor="labels-per-axis-slider">Labels:</label>
+            <input
+              id="labels-per-axis-slider"
+              type="range"
+              min="1"
+              max="3"
+              value={labelsPerAxis}
+              onChange={(e) => {
+                const newValue = parseInt(e.target.value);
+                setLabelsPerAxis(newValue);
+                saveAxisLabels(labels, newValue);
+                if (onAxisLabelsChange) {
+                  onAxisLabelsChange(labels, newValue);
+                }
+              }}
+              disabled={isProcessing}
+              className="iteration-slider"
+            />
+            <span className="labels-per-axis-value">{labelsPerAxis}</span>
+          </div>
+        </div>
+        
+        {/* Only show controls if not currently processing */}
+        {!isProcessing && (
+          <div className="iteration-controls">
+            <div className="iteration-description">
+              <p>Generate axis label ideas based on the current word list:</p>
             </div>
             
-            <div className="iteration-group">
-              <label htmlFor="outputs-per-prompt">
-                Results per request:
-              </label>
-              <input
-                id="outputs-per-prompt"
-                type="number"
-                min="1"
-                value={outputsPerPrompt}
-                onChange={(e) => setOutputsPerPrompt(parseInt(e.target.value))}
-                className="outputs-input"
-                disabled={loadingSuggestions || findingBestLabels}
-              />
-            </div>
-          </div>
-          
-          <div className="iteration-description">
-            More requests = more variety (but slower)
-          </div>
-        </div>
-        
-        <div className="action-buttons">
-          <button 
-            className="get-suggestions-button"
-            onClick={getWordSuggestions}
-            disabled={loadingSuggestions || findingBestLabels || words.length === 0}
-          >
-            {loadingSuggestions ? 'Generating...' : 'Get Axis Label Ideas'}
-          </button>
-          
-          <button
-            className="find-best-labels-button"
-            onClick={findBestLabels}
-            disabled={loadingSuggestions || findingBestLabels || suggestions.length === 0}
-          >
-            {findingBestLabels ? 'Finding Best Labels...' : 'Find Best Matches'}
-          </button>
-        </div>
-        
-        {(loadingSuggestions || findingBestLabels) && (
-          <>
-            <div className="progress-bar-container">
-              <div 
-                className={`progress-bar ${findingBestLabels || loadingSuggestions ? '' : 'pulsing-progress'}`} 
-                style={{ 
-                  width: findingBestLabels 
-                    ? `${findingProgress}%` 
-                    : loadingSuggestions
-                      ? `${suggestionsProgress}%`
-                      : undefined 
-                }}
-              ></div>
-            </div>
-            {findingBestLabels && (
-              <div className="progress-status">
-                Analyzing: {Math.floor(findingProgress / 100 * totalSuggestions)} of {totalSuggestions}
+            <div className="iteration-row">
+              <div className="iteration-group">
+                <label htmlFor="iteration-slider">API Requests:</label>
+                <input
+                  id="iteration-slider"
+                  type="range"
+                  min="1"
+                  max="5"
+                  value={iterationCount}
+                  onChange={(e) => setIterationCount(parseInt(e.target.value))}
+                  disabled={isProcessing}
+                  className="iteration-slider"
+                />
+                <span className="iteration-value">{iterationCount}</span>
               </div>
-            )}
-            {loadingSuggestions && !findingBestLabels && (
-              <div className="progress-status">
-                Generating: {currentIteration} of {totalSuggestions}
+              
+              <div className="iteration-group">
+                <label htmlFor="outputs-input">Ideas per request:</label>
+                <input
+                  id="outputs-input"
+                  type="number"
+                  min="5"
+                  max="50"
+                  value={outputsPerPrompt}
+                  onChange={(e) => setOutputsPerPrompt(parseInt(e.target.value))}
+                  disabled={isProcessing}
+                  className="outputs-input"
+                />
               </div>
-            )}
-          </>
-        )}
-        
-        {suggestions.length > 0 && (
-          <div className="suggestions-list">
-            <h4>Label Ideas <span className="suggestion-count">({suggestions.length})</span></h4>
-            <div className="suggestion-controls">
-              <button 
-                className="suggestion-control-button"
-                onClick={() => setSuggestions([...suggestions].sort())}
-                disabled={loadingSuggestions || findingBestLabels}
+            </div>
+            
+            <div className="action-buttons">
+              <button
+                className="generate-axis-labels-button"
+                onClick={processAxisLabels}
+                disabled={isProcessing || words.length < 3}
               >
-                Sort A-Z
+                {getButtonText()}
               </button>
             </div>
+          </div>
+        )}
+        
+        {/* Show progress bar during processing */}
+        {isProcessing && (
+          <div className="progress-container">
+            <div className="progress-bar-container">
+              <div 
+                className="progress-bar" 
+                style={{ 
+                  width: `${progress}%`,
+                  animation: progress < 5 ? 'pulse 2s ease-in-out infinite' : 'none'
+                }}
+              />
+            </div>
+            <div className="progress-status">
+              {processingStage === 1 && `Generating ideas (request ${currentIteration} of ${iterationCount})...`}
+              {processingStage === 2 && `Analyzing suggestions (${completedItems} of ${totalItems})...`}
+            </div>
+          </div>
+        )}
+        
+        {/* Suggestions list */}
+        {suggestions.length > 0 && (
+          <div className="suggestions-list">
+            <div className="suggestions-header">
+              <h4>
+                Label Ideas <span className="suggestion-count">({suggestions.length})</span>
+                {suggestionEmbeddings.size > 0 && 
+                  <span className="embedding-count">
+                    {` • ${suggestionEmbeddings.size} cached`}
+                  </span>
+                }
+              </h4>
+              
+              {/* Sort controls */}
+              {suggestionEmbeddings.size > 0 && dimensionIndices && (
+                <div className="sort-controls">
+                  <button 
+                    className={getSortButtonClass('x')}
+                    onClick={() => handleSort('x')}
+                    title={getSortButtonLabel('x')}
+                  >
+                    {sortingBy === 'x' ? (
+                      sortDirection === 'desc' ? <FaSortAmountDown /> : <FaSortAmountUp />
+                    ) : 'X'}
+                  </button>
+                  <button 
+                    className={getSortButtonClass('y')}
+                    onClick={() => handleSort('y')}
+                    title={getSortButtonLabel('y')}
+                  >
+                    {sortingBy === 'y' ? (
+                      sortDirection === 'desc' ? <FaSortAmountDown /> : <FaSortAmountUp />
+                    ) : 'Y'}
+                  </button>
+              <button 
+                    className={getSortButtonClass('z')}
+                    onClick={() => handleSort('z')}
+                    title={getSortButtonLabel('z')}
+                  >
+                    {sortingBy === 'z' ? (
+                      sortDirection === 'desc' ? <FaSortAmountDown /> : <FaSortAmountUp />
+                    ) : 'Z'}
+              </button>
+                </div>
+              )}
+            </div>
+            
             <div className="suggestion-items">
-              {suggestions.map((suggestion, index) => {
-                // Find if this suggestion has an embedding
-                const suggestionData = suggestionsWithEmbeddings.find(s => s.text === suggestion);
-                
-                return (
+              {displayedSuggestions.map((suggestion, index) => (
                   <div key={index} className="suggestion-item-container">
-                    <div 
-                      className="suggestion-item"
+                  <div className="suggestion-item">
+                    <span 
+                      className="suggestion-text"
                       onClick={() => {
-                        // Show a menu to select which axis
                         const axis = window.prompt(`Set "${suggestion}" as which axis? (x/y/z)`, "x").toLowerCase();
                         if (axis === 'x' || axis === 'y' || axis === 'z') {
                           handleLabelChange(axis, suggestion);
@@ -671,36 +775,46 @@ function AxisLabelManager({ axisLabels = { x: "X", y: "Y", z: "Z" }, onAxisLabel
                         }
                       }}
                     >
-                      <span className="suggestion-text">{suggestion}</span>
+                      {suggestion}
+                    </span>
                       <button 
+                      onClick={() => getAndShowEmbedding(suggestion)}
                         className="view-embedding-button small"
-                        onClick={(e) => {
-                          e.stopPropagation(); // Prevent triggering the parent's onClick
-                          showEmbedding(suggestion);
-                        }}
-                        title="View data vector"
+                      title="View embedding vector"
                       >
                         <FaTable />
                       </button>
                     </div>
                   </div>
-                );
-              })}
+              ))}
             </div>
+          </div>
+        )}
+        
+        {/* Add the Refresh from Cache button */}
+        {suggestions.length > 0 && suggestionEmbeddings.size > 0 && (
+          <div className="manual-control-buttons">
+            <button
+              className="refresh-from-cache-button"
+              onClick={refreshFromCache}
+              disabled={isProcessing}
+            >
+              <FaSync /> Refresh Labels from Cache
+            </button>
           </div>
         )}
       </div>
       
-      {/* Full embedding viewer modal */}
+      {/* Embedding viewer */}
       {selectedEmbedding && (
         <EmbeddingViewer
           embedding={selectedEmbedding.embedding}
-          word={selectedEmbedding.text}
-          onClose={closeEmbeddingView}
+          word={selectedEmbedding.word}
+          onClose={closeEmbeddingViewer}
         />
       )}
     </div>
   );
-}
+});
 
 export default AxisLabelManager; 
