@@ -227,10 +227,10 @@ const createBidirectionalAxesHelper = (size = 2) => {
  * @param {THREE.Scene} scene - The scene to set up
  * @param {Object} axisLabels - Custom labels for axes {x, y, z}
  * @param {number} textSize - Adjusts the size of text elements
- * @param {number} labelsPerAxis - Number of labels to show per axis (default: 1)
+ * @param {number} labelsPerAxis - Number of labels per axis (ignored, always uses 2)
  * @returns {void}
  */
-export const setupBasicScene = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' }, textSize = 1, labelsPerAxis = 1) => {
+export const setupBasicScene = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' }, textSize = 1, labelsPerAxis = 2) => {
   if (!scene) return;
   
   // Store the text size for later updates
@@ -297,12 +297,12 @@ export const setupBasicScene = (scene, axisLabels = { x: 'X', y: 'Y', z: 'Z' }, 
  * @param {THREE.Scene} scene - The Three.js scene
  * @param {Object} axisLabels - Object containing labels for x, y, and z axes
  * @param {Number} textSize - The size of the text
- * @param {Number} labelsPerAxis - Number of labels to show per axis (default: 1)
+ * @param {Number} labelsPerAxis - Number of labels per axis (ignored, always uses 2)
  * @param {Object} dimensionInfo - Information about the dimensions being displayed
  * @param {Object} dimensionReduction - The dimension reduction result containing embeddings
  * @returns {Boolean} - Whether the update was successful
  */
-export const updateAxisLabels = (scene, axisLabels = { x: "X", y: "Y", z: "Z" }, textSize, labelsPerAxis = 1, dimensionInfo, dimensionReduction) => {
+export const updateAxisLabels = (scene, axisLabels = { x: "X", y: "Y", z: "Z" }, textSize, labelsPerAxis = 2, dimensionInfo, dimensionReduction) => {
   if (!scene || !scene.userData.axisLabels) {
     return false;
   }
@@ -317,8 +317,7 @@ export const updateAxisLabels = (scene, axisLabels = { x: "X", y: "Y", z: "Z" },
     scene.userData.currentAxisLabels.negZ !== axisLabels.negZ;
   
   const hasSettingsChanged = 
-    scene.userData.textSize !== textSize ||
-    scene.userData.labelsPerAxis !== labelsPerAxis;
+    scene.userData.textSize !== textSize;
   
   // Skip update if nothing changed
   if (!hasLabelsChanged && !hasSettingsChanged && !dimensionInfo) {
@@ -380,86 +379,84 @@ export const updateAxisLabels = (scene, axisLabels = { x: "X", y: "Y", z: "Z" },
   scene.add(newZLabel);
   scene.add(newNegZLabel);
   
-  // Add additional labels if requested
-  if (labelsPerAxis > 1) {
-    try {
-      // Get additional labels from localStorage (these are the sorted suggestions)
-      const savedAdditionalLabels = localStorage.getItem('axis-additional-labels');
-      let additionalLabels = { 
-        x: [], y: [], z: [], 
-        negX: [], negY: [], negZ: [] 
-      };
-      
-      if (savedAdditionalLabels) {
-        try {
-          additionalLabels = JSON.parse(savedAdditionalLabels);
-        } catch (e) {
-          console.error('Error parsing additional labels:', e);
-        }
+  // Always add additional labels (always labelsPerAxis = 2)
+  try {
+    // Get additional labels from localStorage (these are the sorted suggestions)
+    const savedAdditionalLabels = localStorage.getItem('axis-additional-labels');
+    let additionalLabels = { 
+      x: [], y: [], z: [], 
+      negX: [], negY: [], negZ: [] 
+    };
+    
+    if (savedAdditionalLabels) {
+      try {
+        additionalLabels = JSON.parse(savedAdditionalLabels);
+      } catch (e) {
+        console.error('Error parsing additional labels:', e);
       }
-      
-      // Add X axis additional labels (positive direction)
-      if (additionalLabels.x && additionalLabels.x.length) {
-        additionalLabels.x.slice(0, Math.max(0, labelsPerAxis - 1)).forEach((label, index) => {
-          const position = new THREE.Vector3(2.2 - ((index+1) * 0.4), 0.15, 0);
-          const sprite = createTextSprite(label, position, '#ff5555', fontSize * 0.8);
-          scene.add(sprite);
-          scene.userData.additionalLabels.push(sprite);
-        });
-      }
-      
-      // Add X axis additional labels (negative direction)
-      if (additionalLabels.negX && additionalLabels.negX.length) {
-        additionalLabels.negX.slice(0, Math.max(0, labelsPerAxis - 1)).forEach((label, index) => {
-          const position = new THREE.Vector3(-2.2 + ((index+1) * 0.4), 0.15, 0);
-          const sprite = createTextSprite(label, position, '#ff5555', fontSize * 0.8);
-          scene.add(sprite);
-          scene.userData.additionalLabels.push(sprite);
-        });
-      }
-      
-      // Add Y axis additional labels (positive direction)
-      if (additionalLabels.y && additionalLabels.y.length) {
-        additionalLabels.y.slice(0, Math.max(0, labelsPerAxis - 1)).forEach((label, index) => {
-          const position = new THREE.Vector3(0, 2.2 + 0.15 - ((index+1) * 0.4), 0);
-          const sprite = createTextSprite(label, position, '#55ff55', fontSize * 0.8);
-          scene.add(sprite);
-          scene.userData.additionalLabels.push(sprite);
-        });
-      }
-      
-      // Add Y axis additional labels (negative direction)
-      if (additionalLabels.negY && additionalLabels.negY.length) {
-        additionalLabels.negY.slice(0, Math.max(0, labelsPerAxis - 1)).forEach((label, index) => {
-          const position = new THREE.Vector3(0, -2.2 + 0.15 + ((index+1) * 0.4), 0);
-          const sprite = createTextSprite(label, position, '#55ff55', fontSize * 0.8);
-          scene.add(sprite);
-          scene.userData.additionalLabels.push(sprite);
-        });
-      }
-      
-      // Add Z axis additional labels (positive direction)
-      if (additionalLabels.z && additionalLabels.z.length) {
-        additionalLabels.z.slice(0, Math.max(0, labelsPerAxis - 1)).forEach((label, index) => {
-          const position = new THREE.Vector3(0, 0.15, 2.2 - ((index+1) * 0.4));
-          const sprite = createTextSprite(label, position, '#5555ff', fontSize * 0.8);
-          scene.add(sprite);
-          scene.userData.additionalLabels.push(sprite);
-        });
-      }
-      
-      // Add Z axis additional labels (negative direction)
-      if (additionalLabels.negZ && additionalLabels.negZ.length) {
-        additionalLabels.negZ.slice(0, Math.max(0, labelsPerAxis - 1)).forEach((label, index) => {
-          const position = new THREE.Vector3(0, 0.15, -2.2 + ((index+1) * 0.4));
-          const sprite = createTextSprite(label, position, '#5555ff', fontSize * 0.8);
-          scene.add(sprite);
-          scene.userData.additionalLabels.push(sprite);
-        });
-      }
-    } catch (error) {
-      console.error('Error adding additional axis labels:', error);
     }
+    
+    // Add X axis additional labels (positive direction)
+    if (additionalLabels.x && additionalLabels.x.length) {
+      additionalLabels.x.slice(0, 1).forEach((label, index) => {
+        const position = new THREE.Vector3(2.2 - ((index+1) * 0.4), 0.15, 0);
+        const sprite = createTextSprite(label, position, '#ff5555', fontSize * 0.8);
+        scene.add(sprite);
+        scene.userData.additionalLabels.push(sprite);
+      });
+    }
+    
+    // Add X axis additional labels (negative direction)
+    if (additionalLabels.negX && additionalLabels.negX.length) {
+      additionalLabels.negX.slice(0, 1).forEach((label, index) => {
+        const position = new THREE.Vector3(-2.2 + ((index+1) * 0.4), 0.15, 0);
+        const sprite = createTextSprite(label, position, '#ff5555', fontSize * 0.8);
+        scene.add(sprite);
+        scene.userData.additionalLabels.push(sprite);
+      });
+    }
+    
+    // Add Y axis additional labels (positive direction)
+    if (additionalLabels.y && additionalLabels.y.length) {
+      additionalLabels.y.slice(0, 1).forEach((label, index) => {
+        const position = new THREE.Vector3(0, 2.2 + 0.15 - ((index+1) * 0.4), 0);
+        const sprite = createTextSprite(label, position, '#55ff55', fontSize * 0.8);
+        scene.add(sprite);
+        scene.userData.additionalLabels.push(sprite);
+      });
+    }
+    
+    // Add Y axis additional labels (negative direction)
+    if (additionalLabels.negY && additionalLabels.negY.length) {
+      additionalLabels.negY.slice(0, 1).forEach((label, index) => {
+        const position = new THREE.Vector3(0, -2.2 + 0.15 + ((index+1) * 0.4), 0);
+        const sprite = createTextSprite(label, position, '#55ff55', fontSize * 0.8);
+        scene.add(sprite);
+        scene.userData.additionalLabels.push(sprite);
+      });
+    }
+    
+    // Add Z axis additional labels (positive direction)
+    if (additionalLabels.z && additionalLabels.z.length) {
+      additionalLabels.z.slice(0, 1).forEach((label, index) => {
+        const position = new THREE.Vector3(0, 0.15, 2.2 - ((index+1) * 0.4));
+        const sprite = createTextSprite(label, position, '#5555ff', fontSize * 0.8);
+        scene.add(sprite);
+        scene.userData.additionalLabels.push(sprite);
+      });
+    }
+    
+    // Add Z axis additional labels (negative direction)
+    if (additionalLabels.negZ && additionalLabels.negZ.length) {
+      additionalLabels.negZ.slice(0, 1).forEach((label, index) => {
+        const position = new THREE.Vector3(0, 0.15, -2.2 + ((index+1) * 0.4));
+        const sprite = createTextSprite(label, position, '#5555ff', fontSize * 0.8);
+        scene.add(sprite);
+        scene.userData.additionalLabels.push(sprite);
+      });
+    }
+  } catch (error) {
+    console.error('Error adding additional axis labels:', error);
   }
   
   // Store the new labels in scene userData

@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import ControlPanel from './components/ControlPanel'
 import EmbeddingVisualizer from './components/EmbeddingVisualizer'
-import { loadAxisLabels, loadLabelsPerAxis, saveAxisLabels } from './services/axisLabelService'
+import { loadAxisLabels, saveAxisLabels } from './services/axisLabelService'
 import './App.css'
 
 function App() {
@@ -10,7 +10,8 @@ function App() {
   const [algorithm, setAlgorithm] = useState('pca')
   const [axisLabels, setAxisLabels] = useState(() => loadAxisLabels())
   const [textSize, setTextSize] = useState(1)
-  const [labelsPerAxis, setLabelsPerAxis] = useState(() => loadLabelsPerAxis())
+  // Always use 2 labels per axis
+  const labelsPerAxis = 2
   const visualizerRef = useRef(null)
 
   const handleWordsChange = useCallback((newWords, newWordsWithEmbeddings) => {
@@ -37,14 +38,11 @@ function App() {
     localStorage.setItem('selected-dimension-algorithm', newAlgorithm)
   }, [])
   
-  const handleAxisLabelsChange = useCallback((newLabels, newLabelsPerAxis) => {
+  const handleAxisLabelsChange = useCallback((newLabels) => {
     // Update local state directly
     setAxisLabels(newLabels);
-    if (newLabelsPerAxis) {
-      setLabelsPerAxis(newLabelsPerAxis);
-    }
-    // Save to localStorage through the service
-    saveAxisLabels(newLabels, newLabelsPerAxis);
+    // Save to localStorage through the service - always use 2 labels per axis
+    saveAxisLabels(newLabels, 2);
   }, [])
   
   const handleTextSizeChange = useCallback((newSize) => {
@@ -102,15 +100,10 @@ function App() {
     const handleAxisLabelsUpdated = () => {
       // Load the updated labels
       const updatedLabels = loadAxisLabels();
-      const updatedLabelsPerAxis = loadLabelsPerAxis();
       
       // Prevent unnecessary updates by comparing with current state
       if (JSON.stringify(updatedLabels) !== JSON.stringify(axisLabels)) {
         setAxisLabels(updatedLabels);
-      }
-      
-      if (updatedLabelsPerAxis !== labelsPerAxis) {
-        setLabelsPerAxis(updatedLabelsPerAxis);
       }
     };
     
@@ -120,7 +113,7 @@ function App() {
     return () => {
       window.removeEventListener('axis-labels-updated', handleAxisLabelsUpdated);
     };
-  }, [axisLabels, labelsPerAxis]);
+  }, [axisLabels]);
 
   return (
     <div className="app-container">

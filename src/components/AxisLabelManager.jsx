@@ -14,6 +14,9 @@ import { getEmbedding } from '../services/openaiService';
 import EmbeddingViewer from './EmbeddingViewer';
 import './AxisLabelManager.css';
 import { sortSuggestionsByAxisDimension } from '../services/sortingService';
+import logger from '../utils/logger';
+
+const MODULE = 'AxisLabelManager';
 
 /**
  * Component for managing the labels of the X, Y, and Z axes
@@ -35,7 +38,8 @@ const AxisLabelManager = forwardRef(({
 }, ref) => {
   // Axis labels state
   const [labels, setLabels] = useState(axisLabels);
-  const [labelsPerAxis, setLabelsPerAxis] = useState(() => loadLabelsPerAxis());
+  // Always use 2 labels per axis
+  const labelsPerAxis = 2;
   
   // AI generation controls
   const [iterationCount, setIterationCount] = useState(1);
@@ -65,6 +69,7 @@ const AxisLabelManager = forwardRef(({
 
   // Load saved suggestions and embeddings on mount
   useEffect(() => {
+    logger.debug(MODULE, 'Component mounted or axisLabels prop updated', { axisLabels });
     // Load suggestions
     const savedSuggestions = loadAxisLabelIdeas();
     if (savedSuggestions && savedSuggestions.length > 0) {
@@ -129,6 +134,7 @@ const AxisLabelManager = forwardRef(({
 
   // Initialize with provided axis labels
   useEffect(() => {
+    logger.debug(MODULE, 'Component mounted or axisLabels prop updated', { axisLabels });
     if (axisLabels) {
       setLabels(axisLabels);
     }
@@ -136,13 +142,20 @@ const AxisLabelManager = forwardRef(({
 
   // Handle changes to axis labels
   const handleLabelChange = useCallback((axis, value) => {
+    logger.info(MODULE, `Manual label change for axis ${axis}: ${value}`);
     const newLabels = { ...labels, [axis]: value };
     setLabels(newLabels);
     saveAxisLabels(newLabels, labelsPerAxis);
-  }, [labels, labelsPerAxis]);
+    
+    if (onAxisLabelsChange) {
+      logger.debug(MODULE, 'Calling onAxisLabelsChange callback', newLabels);
+      onAxisLabelsChange(newLabels, labelsPerAxis);
+    }
+  }, [labels, onAxisLabelsChange, labelsPerAxis]);
 
   // Save labels and labelsPerAxis to localStorage when they change
   useEffect(() => {
+    logger.debug(MODULE, 'Labels state changed, saving to localStorage', { labels, labelsPerAxis });
     saveAxisLabels(labels, labelsPerAxis);
   }, [labelsPerAxis, labels]);
 
@@ -150,6 +163,7 @@ const AxisLabelManager = forwardRef(({
   useEffect(() => {
     const checkForEmbeddingUpdates = () => {
       const embeddingsUpdated = localStorage.getItem('embeddings-updated');
+      logger.debug(MODULE, 'Checking for embedding updates', { embeddingsUpdated });
       
       if (embeddingsUpdated === 'true' && suggestionsRef.current.length > 0 && !isProcessing) {
         // Clear the flag
@@ -175,6 +189,100 @@ const AxisLabelManager = forwardRef(({
       clearInterval(intervalId);
     };
   }, [isProcessing, algorithmId]);
+
+  /**
+   * Find the best axis labels based on current embeddings
+   */
+  const findBestLabels = useCallback(async () => {
+    if (isProcessing || !algorithmId) {
+      logger.warn(MODULE, 'findBestLabels called while processing or without algorithmId', { isProcessing, algorithmId });
+      return false;
+    }
+    
+    setIsProcessing(true);
+    setProcessingStage(2);
+    setProgress(0);
+    
+    // Get current suggestions
+    const currentSuggestions = suggestionsRef.current;
+    if (!currentSuggestions || currentSuggestions.length < 3) {
+      toast.warning('Not enough suggestions. Generate suggestions first.');
+      setIsProcessing(false);
+      return false;
+    }
+    
+    const toastId = toast.info(`Stage 2/2: Getting embeddings for ${currentSuggestions.length} suggestions...`, {
+      autoClose: false,
+      closeButton: false
+    });
+    
+    try {
+      // Make sure we have a valid algorithm ID
+      if (!algorithmId) {
+        toast.error('No dimension reduction algorithm specified');
+        return false;
+      }
+      
+      // Use the service to analyze embeddings
+      const result = await analyzeEmbeddingsForAxisLabels({
+        suggestions: currentSuggestions,
+        algorithmId,
+        labelsPerAxis,
+        onProgress: (data) => {
+          setCompletedItems(data.completed || 0);
+          setProgress(data.progress || 0);
+        }
+      });
+      
+      if (!result) {
+        toast.update(toastId, {
+          render: 'Failed to analyze embeddings for axis labels',
+          type: 'error',
+          autoClose: 5000,
+          closeButton: true
+        });
+        return false;
+      }
+      
+      // Update toast to success
+      toast.update(toastId, {
+        render: 'Found optimal axis labels!',
+        type: 'success',
+        autoClose: 3000,
+        closeButton: true
+      });
+      
+      // Update axis labels
+      if (onAxisLabelsChange) {
+        logger.info(MODULE, 'Updating axis labels via onAxisLabelsChange', result.bestLabels);
+        onAxisLabelsChange(result.bestLabels, labelsPerAxis);
+      }
+      
+      // Force a DOM update by explicitly triggering the event
+      import('../services/axisLabelService').then(module => {
+        logger.debug(MODULE, 'Triggering axis labels update event');
+        module.triggerAxisLabelsUpdate();
+      });
+      
+      return true;
+    } catch (error) {
+      logger.error(MODULE, 'Error finding best labels:', error);
+      
+      // Update toast to error
+      toast.update(toastId, {
+        render: `Error: ${error.message}`,
+        type: 'error',
+        autoClose: 5000,
+        closeButton: true
+      });
+      
+      return false;
+    } finally {
+      setProcessingStage(0);
+      setProgress(0);
+      setIsProcessing(false);
+    }
+  }, [algorithmId, isProcessing, labelsPerAxis, onAxisLabelsChange]);
 
   // Simplify the dimension indices update
   useEffect(() => {
@@ -236,97 +344,6 @@ const AxisLabelManager = forwardRef(({
   }, [sortingBy]);
 
   /**
-   * Analyze embeddings to find the best axis labels
-   */
-  const findBestLabels = useCallback(async () => {
-    // Get current suggestions from ref to ensure latest state
-    const currentSuggestions = suggestionsRef.current;
-    
-    // Check if we have suggestions
-    if (!currentSuggestions || currentSuggestions.length === 0) {
-      toast.warning('No suggestions available. Generate suggestions first.');
-      return false;
-    }
-    
-    // Set up state for stage 2
-    setProcessingStage(2);
-    setProgress(0);
-    setTotalItems(currentSuggestions.length);
-    setCompletedItems(0);
-    
-    // Create toast for tracking progress
-    const toastId = toast.info(`Stage 2/2: Getting embeddings for ${currentSuggestions.length} suggestions...`, {
-      autoClose: false,
-      closeButton: false
-    });
-    
-    try {
-      // Make sure we have a valid algorithm ID
-      if (!algorithmId) {
-        toast.error('No dimension reduction algorithm specified');
-        return false;
-      }
-      
-      // Use the service to analyze embeddings
-      const result = await analyzeEmbeddingsForAxisLabels({
-        suggestions: currentSuggestions,
-        algorithmId,
-        labelsPerAxis,
-        onProgress: (data) => {
-          setCompletedItems(data.completed || 0);
-          setProgress(data.progress || 0);
-        }
-      });
-      
-      if (!result) {
-        toast.update(toastId, {
-          render: 'Failed to analyze embeddings for axis labels',
-          type: 'error',
-          autoClose: 5000,
-          closeButton: true
-        });
-        return false;
-      }
-      
-      // Update toast to success
-      toast.update(toastId, {
-        render: 'Found optimal axis labels!',
-        type: 'success',
-        autoClose: 3000,
-        closeButton: true
-      });
-      
-      // Update axis labels
-      if (onAxisLabelsChange) {
-        onAxisLabelsChange(result.bestLabels, labelsPerAxis);
-      }
-      
-      // Force a DOM update by explicitly triggering the event
-      import('../services/axisLabelService').then(module => {
-        module.triggerAxisLabelsUpdate();
-      });
-      
-      return true;
-    } catch (error) {
-      console.error('Error finding best labels:', error);
-      
-      // Update toast to error
-      toast.update(toastId, {
-        render: `Error: ${error.message}`,
-        type: 'error',
-        autoClose: 5000,
-        closeButton: true
-      });
-      
-      return false;
-    } finally {
-      setProcessingStage(0);
-      setProgress(0);
-      setIsProcessing(false);
-    }
-  }, [algorithmId, isProcessing, labelsPerAxis, onAxisLabelsChange]);
-  
-  /**
    * Get embedding for a specific suggestion and show it in the viewer
    */
   const getAndShowEmbedding = useCallback(async (suggestion) => {
@@ -381,93 +398,168 @@ const AxisLabelManager = forwardRef(({
   }, []);
   
   /**
-   * Main function to generate and analyze axis labels
+   * Handle completion of the axis label generation workflow
+   */
+  const handleWorkflowComplete = useCallback((results) => {
+    logger.info(MODULE, 'Axis label generation workflow completed', results);
+    // Update axis labels in parent component
+    if (onAxisLabelsChange && results && results.bestLabels) {
+      logger.debug(MODULE, 'Updating axis labels via onAxisLabelsChange in workflow complete', results.bestLabels);
+      onAxisLabelsChange(results.bestLabels, labelsPerAxis);
+      
+      // Explicitly force a DOM update
+      import('../services/axisLabelService').then(module => {
+        logger.debug(MODULE, 'Triggering axis labels update event in workflow complete');
+        module.triggerAxisLabelsUpdate();
+      });
+      
+      // Show success toast
+      toast.success('Generated and applied optimal axis labels!');
+    }
+    
+    // Load suggestions to update the UI
+    const savedSuggestions = loadAxisLabelIdeas();
+    logger.debug(MODULE, 'Loaded saved suggestions after workflow complete', { count: savedSuggestions?.length });
+    if (savedSuggestions && savedSuggestions.length > 0) {
+      setSuggestions(savedSuggestions);
+      setDisplayedSuggestions(savedSuggestions);
+      suggestionsRef.current = savedSuggestions;
+    }
+    
+    // Load embeddings to update the UI
+    const savedEmbeddings = loadAxisLabelEmbeddings();
+    logger.debug(MODULE, 'Loaded saved embeddings after workflow complete', { count: savedEmbeddings?.length });
+    if (savedEmbeddings && savedEmbeddings.length > 0) {
+      const embeddingsMap = new Map();
+      savedEmbeddings.forEach(item => {
+        if (item.text && item.embedding) {
+          embeddingsMap.set(item.text, item.embedding);
+        }
+      });
+      setSuggestionEmbeddings(embeddingsMap);
+    }
+  }, [onAxisLabelsChange, labelsPerAxis]);
+  
+  /**
+   * Process axis labels using the two-stage workflow with better error handling
    */
   const processAxisLabels = useCallback(async () => {
     if (isProcessing) {
+      toast.info('Please wait, another operation is in progress');
+      return;
+    }
+    
+    if (!algorithmId) {
+      toast.warning('Algorithm ID is required. Please select a dimension reduction algorithm.');
       return;
     }
     
     if (words.length < 3) {
-      toast.warning('Please add at least 3 words to generate labels');
+      toast.warning('At least 3 words are required to generate axis labels');
       return;
     }
     
     setIsProcessing(true);
-    setProcessingStage(1);
-    setProgress(0);
     
     try {
-      // Use the axisLabelGenerationWorkflow
-      const result = await generateAxisLabelsWorkflow({
+      logger.info(MODULE, 'Starting axis label generation workflow', {
+        wordCount: words.length,
+        iterationCount,
+        outputsPerPrompt
+      });
+      
+      // Run the full workflow, which includes both stages
+      await generateAxisLabelsWorkflow({
         words,
         algorithmId,
         iterationCount,
         outputsPerPrompt,
         labelsPerAxis,
         onProgress: (data) => {
+          // Update UI based on stage
           setProcessingStage(data.stage);
           setProgress(data.progress);
-          if (data.currentIteration) {
-            setCurrentIteration(data.currentIteration);
-          }
+          
+          // Update item counts if available
           if (data.totalItems) {
             setTotalItems(data.totalItems);
           }
-          if (data.completedItems) {
+          if (data.completedItems !== undefined) {
             setCompletedItems(data.completedItems);
           }
-        },
-        onComplete: (results) => {
-          // Update axis labels in parent component
-          if (onAxisLabelsChange && results && results.bestLabels) {
-            onAxisLabelsChange(results.bestLabels, labelsPerAxis);
-            
-            // Explicitly force a DOM update
-            import('../services/axisLabelService').then(module => {
-              module.triggerAxisLabelsUpdate();
-            });
-            
-            // Show success toast
-            toast.success('Generated and applied optimal axis labels!');
+          
+          // Update current iteration if available
+          if (data.currentIteration !== undefined) {
+            setCurrentIteration(data.currentIteration);
           }
-        }
+        },
+        onComplete: handleWorkflowComplete
       });
       
-      if (result) {
-        // Load suggestions to update the UI
-        const savedSuggestions = loadAxisLabelIdeas();
-        if (savedSuggestions && savedSuggestions.length > 0) {
-          setSuggestions(savedSuggestions);
-          setDisplayedSuggestions(savedSuggestions);
-          suggestionsRef.current = savedSuggestions;
-        }
-        
-        // Load embeddings to update the UI
-        const savedEmbeddings = loadAxisLabelEmbeddings();
-        if (savedEmbeddings && savedEmbeddings.length > 0) {
-          const embeddingsMap = new Map();
-          savedEmbeddings.forEach(item => {
-            if (item.text && item.embedding) {
-              embeddingsMap.set(item.text, item.embedding);
-            }
-          });
-          setSuggestionEmbeddings(embeddingsMap);
-        }
-        
-        return true;
-      }
     } catch (error) {
-      console.error('Error processing axis labels:', error);
+      logger.error(MODULE, 'Error in axis label generation workflow', error);
       toast.error(`Error: ${error.message}`);
     } finally {
       setIsProcessing(false);
       setProcessingStage(0);
       setProgress(0);
+      
+      // Force UI refresh to ensure latest data is displayed
+      setTimeout(() => {
+        try {
+          // Load suggestions to update the UI - with error handling
+          const savedSuggestions = loadAxisLabelIdeas();
+          if (savedSuggestions && savedSuggestions.length > 0) {
+            logger.debug(MODULE, 'Refreshing UI with saved suggestions', { count: savedSuggestions.length });
+            setSuggestions(savedSuggestions);
+            setDisplayedSuggestions(savedSuggestions);
+            suggestionsRef.current = savedSuggestions;
+          } else {
+            logger.warn(MODULE, 'No saved suggestions found for UI refresh');
+          }
+          
+          // Make sure all buttons and UI elements are properly re-enabled
+          setIsGeneratingLabels(false);
+          setAutoDetectInProgress(false);
+          
+          // Trigger DOM and label updates - with error handling
+          import('../services/axisLabelService').then(module => {
+            try {
+              module.triggerAxisLabelsUpdate();
+              logger.debug(MODULE, 'Triggered axis labels update');
+            } catch (updateError) {
+              logger.error(MODULE, 'Error triggering axis labels update', updateError);
+              // As a fallback, try to directly update label states
+              try {
+                const savedLabels = module.loadAxisLabels();
+                if (savedLabels && onAxisLabelsChange) {
+                  onAxisLabelsChange(savedLabels);
+                  logger.debug(MODULE, 'Applied direct axis label update', savedLabels);
+                }
+              } catch (labelError) {
+                logger.error(MODULE, 'Error in direct axis label update', labelError);
+              }
+            }
+          }).catch(importError => {
+            logger.error(MODULE, 'Error importing axisLabelService', importError);
+          });
+        } catch (refreshError) {
+          logger.error(MODULE, 'Error in UI refresh after workflow', refreshError);
+          // Final fallback - make sure UI is not stuck in loading state
+          setIsGeneratingLabels(false);
+          setAutoDetectInProgress(false);
+        }
+      }, 300);
     }
-    
-    return false;
-  }, [words, algorithmId, isProcessing, iterationCount, outputsPerPrompt, labelsPerAxis, onAxisLabelsChange]);
+  }, [
+    algorithmId, 
+    handleWorkflowComplete, 
+    isProcessing, 
+    iterationCount, 
+    labelsPerAxis, 
+    outputsPerPrompt, 
+    words.length
+  ]);
 
   /**
    * Get appropriate button text based on current state
@@ -475,14 +567,14 @@ const AxisLabelManager = forwardRef(({
   const getButtonText = useCallback(() => {
     if (isProcessing) {
       if (processingStage === 1) {
-        return `Generating Ideas (${currentIteration}/${iterationCount})...`;
+        return `Generating Ideas (${completedItems}/${totalItems})...`;
       } else if (processingStage === 2) {
-        return `Finding Best Matches (${Math.floor(progress)}%)...`;
+        return `Finding Best Matches (${completedItems}/${totalItems})...`;
       }
       return 'Processing...';
     }
     return 'Generate Axis Labels';
-  }, [isProcessing, processingStage, currentIteration, iterationCount, progress]);
+  }, [isProcessing, processingStage, completedItems, totalItems]);
 
   /**
    * Get the button class for a sort button
@@ -519,9 +611,11 @@ const AxisLabelManager = forwardRef(({
       });
       
       // Import the refreshLabelsFromCache function
+      logger.info(MODULE, 'Calling refreshLabelsFromCache service');
       const result = await refreshLabelsFromCache(algorithmId, labelsPerAxis, (data) => {
         // This is the onComplete callback
         if (onAxisLabelsChange && data && data.bestLabels) {
+          logger.debug(MODULE, 'Updating axis labels via onAxisLabelsChange from cache refresh', data.bestLabels);
           onAxisLabelsChange(data.bestLabels, labelsPerAxis);
         }
       });
@@ -537,6 +631,7 @@ const AxisLabelManager = forwardRef(({
         
         // Force a DOM update by explicitly triggering the event
         import('../services/axisLabelService').then(module => {
+          logger.debug(MODULE, 'Triggering axis labels update event after cache refresh');
           module.triggerAxisLabelsUpdate();
         });
         
@@ -553,7 +648,7 @@ const AxisLabelManager = forwardRef(({
         return false;
       }
     } catch (error) {
-      console.error('Error refreshing from cache:', error);
+      logger.error(MODULE, 'Error refreshing from cache:', error);
       
       // Update toast to error
       toast.error(`Error refreshing labels: ${error.message}`);
@@ -576,74 +671,48 @@ const AxisLabelManager = forwardRef(({
         <p>Set labels for each axis to give meaning to the 3D visualization.</p>
       </div>
       
-      <div className="axis-labels-input-container">
-        <h4>Axis Labels</h4>
-        
-        <div className="axis-label-group">
-          <label htmlFor="x-axis-label">X-Axis:</label>
-          <input
-            id="x-axis-label"
-            type="text"
-            className="axis-label-input"
-            value={labels.x}
-            onChange={(e) => handleLabelChange('x', e.target.value)}
-            placeholder="X-Axis Label"
-          />
-        </div>
-        
-        <div className="axis-label-group">
-          <label htmlFor="y-axis-label">Y-Axis:</label>
-          <input
-            id="y-axis-label"
-            type="text"
-            className="axis-label-input"
-            value={labels.y}
-            onChange={(e) => handleLabelChange('y', e.target.value)}
-            placeholder="Y-Axis Label"
-          />
-        </div>
-        
-        <div className="axis-label-group">
-          <label htmlFor="z-axis-label">Z-Axis:</label>
-          <input
-            id="z-axis-label"
-            type="text"
-            className="axis-label-input"
-            value={labels.z}
-            onChange={(e) => handleLabelChange('z', e.target.value)}
-            placeholder="Z-Axis Label"
-          />
-        </div>
-      </div>
-      
       {/* AI-based axis label generation */}
       <div className="suggestions-section">
-        <div className="labels-per-axis-control">
-          <div className="control-description">
-            <p>Number of labels per axis (experimental):</p>
+        {/* Show progress display when processing */}
+        {isProcessing && (
+          <div className={`progress-container stage-${processingStage}`}>
+            <div className="progress-status">
+              <div className="progress-stage">
+                {processingStage === 1 && (
+                  <span>Stage 1/2: Generating ideas (<span className="completion-count">{completedItems}</span>/<span className="total-count">{totalItems}</span>)</span>
+                )}
+                {processingStage === 2 && (
+                  <span>Stage 2/2: Analyzing embeddings (<span className="completion-count">{completedItems}</span>/<span className="total-count">{totalItems}</span>)</span>
+                )}
+              </div>
+              <div className="progress-percentage">{Math.floor(progress)}%</div>
+            </div>
+            <div className="progress-bar-container">
+              <div 
+                className="progress-bar" 
+                style={{ 
+                  width: `${progress}%`,
+                  background: processingStage === 1 
+                    ? 'linear-gradient(90deg, #4a6fa5 0%, #6a8cc5 100%)' 
+                    : 'linear-gradient(90deg, #4caf50 0%, #8bc34a 100%)'
+                }}
+              ></div>
+            </div>
+            <div className="progress-description">
+              {processingStage === 1 && (
+                <span>Generating axis label ideas for your embeddings... ({completedItems} of {totalItems} completed)</span>
+              )}
+              {processingStage === 2 && (
+                <span>
+                  {completedItems < totalItems 
+                    ? `Getting embeddings for suggestions... (${completedItems} of ${totalItems} completed)`
+                    : `Analyzing embeddings to find optimal axis labels...`
+                  }
+                </span>
+              )}
+            </div>
           </div>
-          <div className="control-row">
-            <label htmlFor="labels-per-axis-slider">Labels:</label>
-            <input
-              id="labels-per-axis-slider"
-              type="range"
-              min="1"
-              max="3"
-              value={labelsPerAxis}
-              onChange={(e) => {
-                const newValue = parseInt(e.target.value);
-                setLabelsPerAxis(newValue);
-                saveAxisLabels(labels, newValue);
-                if (onAxisLabelsChange) {
-                  onAxisLabelsChange(labels, newValue);
-                }
-              }}
-              disabled={isProcessing}
-              className="iteration-slider"
-            />
-            <span className="labels-per-axis-value">{labelsPerAxis}</span>
-          </div>
-        </div>
+        )}
         
         {/* Only show controls if not currently processing */}
         {!isProcessing && (
@@ -674,7 +743,6 @@ const AxisLabelManager = forwardRef(({
                   id="outputs-input"
                   type="number"
                   min="5"
-                  max="50"
                   value={outputsPerPrompt}
                   onChange={(e) => setOutputsPerPrompt(parseInt(e.target.value))}
                   disabled={isProcessing}
@@ -695,75 +763,59 @@ const AxisLabelManager = forwardRef(({
           </div>
         )}
         
-        {/* Show progress bar during processing */}
-        {isProcessing && (
-          <div className="progress-container">
-            <div className="progress-bar-container">
-              <div 
-                className="progress-bar" 
-                style={{ 
-                  width: `${progress}%`,
-                  animation: progress < 5 ? 'pulse 2s ease-in-out infinite' : 'none'
-                }}
-              />
-            </div>
-            <div className="progress-status">
-              {processingStage === 1 && `Generating ideas (request ${currentIteration} of ${iterationCount})...`}
-              {processingStage === 2 && `Analyzing suggestions (${completedItems} of ${totalItems})...`}
-            </div>
-          </div>
-        )}
-        
-        {/* Suggestions list */}
+        {/* Suggestions list with reorganized header */}
         {suggestions.length > 0 && (
           <div className="suggestions-list">
-            <div className="suggestions-header">
-              <h4>
-                Label Ideas <span className="suggestion-count">({suggestions.length})</span>
-                {suggestionEmbeddings.size > 0 && 
-                  <span className="embedding-count">
-                    {` • ${suggestionEmbeddings.size} cached`}
-                  </span>
-                }
-              </h4>
+            <div className="suggestions-header-vertical">
+              {/* Vertically stacked header elements */}
+              <div className="header-label">Label Ideas</div>
+              <div className="header-count">({suggestions.length})</div>
+              {suggestionEmbeddings.size > 0 && 
+                <div className="header-embedding-count">
+                  {`${suggestionEmbeddings.size} cached`}
+                </div>
+              }
               
-              {/* Sort controls */}
+              {/* Sort controls moved below and left-aligned */}
               {suggestionEmbeddings.size > 0 && dimensionIndices && (
-                <div className="sort-controls">
-                  <button 
-                    className={getSortButtonClass('x')}
-                    onClick={() => handleSort('x')}
-                    title={getSortButtonLabel('x')}
-                  >
-                    {sortingBy === 'x' ? (
-                      sortDirection === 'desc' ? <FaSortAmountDown /> : <FaSortAmountUp />
-                    ) : 'X'}
-                  </button>
-                  <button 
-                    className={getSortButtonClass('y')}
-                    onClick={() => handleSort('y')}
-                    title={getSortButtonLabel('y')}
-                  >
-                    {sortingBy === 'y' ? (
-                      sortDirection === 'desc' ? <FaSortAmountDown /> : <FaSortAmountUp />
-                    ) : 'Y'}
-                  </button>
-              <button 
-                    className={getSortButtonClass('z')}
-                    onClick={() => handleSort('z')}
-                    title={getSortButtonLabel('z')}
-                  >
-                    {sortingBy === 'z' ? (
-                      sortDirection === 'desc' ? <FaSortAmountDown /> : <FaSortAmountUp />
-                    ) : 'Z'}
-              </button>
+                <div className="sort-controls-vertical">
+                  <div className="reflex-label">Reflex</div>
+                  <div className="sort-buttons-container">
+                    <button 
+                      className={getSortButtonClass('x')}
+                      onClick={() => handleSort('x')}
+                      title={getSortButtonLabel('x')}
+                    >
+                      {sortingBy === 'x' ? (
+                        sortDirection === 'desc' ? <FaSortAmountDown /> : <FaSortAmountUp />
+                      ) : 'X'}
+                    </button>
+                    <button 
+                      className={getSortButtonClass('y')}
+                      onClick={() => handleSort('y')}
+                      title={getSortButtonLabel('y')}
+                    >
+                      {sortingBy === 'y' ? (
+                        sortDirection === 'desc' ? <FaSortAmountDown /> : <FaSortAmountUp />
+                      ) : 'Y'}
+                    </button>
+                    <button 
+                      className={getSortButtonClass('z')}
+                      onClick={() => handleSort('z')}
+                      title={getSortButtonLabel('z')}
+                    >
+                      {sortingBy === 'z' ? (
+                        sortDirection === 'desc' ? <FaSortAmountDown /> : <FaSortAmountUp />
+                      ) : 'Z'}
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
             
             <div className="suggestion-items">
               {displayedSuggestions.map((suggestion, index) => (
-                  <div key={index} className="suggestion-item-container">
+                <div key={index} className="suggestion-item-container">
                   <div className="suggestion-item">
                     <span 
                       className="suggestion-text"
@@ -777,15 +829,15 @@ const AxisLabelManager = forwardRef(({
                     >
                       {suggestion}
                     </span>
-                      <button 
+                    <button 
                       onClick={() => getAndShowEmbedding(suggestion)}
-                        className="view-embedding-button small"
+                      className="view-embedding-button small"
                       title="View embedding vector"
-                      >
-                        <FaTable />
-                      </button>
-                    </div>
+                    >
+                      <FaTable />
+                    </button>
                   </div>
+                </div>
               ))}
             </div>
           </div>

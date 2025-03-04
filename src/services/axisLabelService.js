@@ -50,7 +50,7 @@ export const loadAxisLabels = () => {
       // Update our last labels state tracking
       lastLabelsState = { 
         labels: parsed, 
-        labelsPerAxis: loadLabelsPerAxis() 
+        labelsPerAxis: 2 // Always use 2 labels per axis
       };
       return parsed;
     }
@@ -65,24 +65,27 @@ export const loadAxisLabels = () => {
  * Save axis labels to localStorage
  * 
  * @param {Object} labels - Axis labels {x, y, z}
- * @param {number} labelsPerAxis - Number of labels to show per axis
+ * @param {number} labelsPerAxis - Number of labels to show per axis (ignored, always uses 2)
  */
-export const saveAxisLabels = (labels, labelsPerAxis = 1) => {
+export const saveAxisLabels = (labels, labelsPerAxis = 2) => {
   // Prevent duplicate updates and infinite loops
   if (updateInProgress) return;
   
+  // Always use 2 labels per axis
+  const fixedLabelsPerAxis = 2;
+  
   // Check if this update is actually changing anything
-  if (!isLabelsDifferent(labels, labelsPerAxis)) return;
+  if (!isLabelsDifferent(labels, fixedLabelsPerAxis)) return;
   
   try {
     updateInProgress = true;
     
     // Update tracking state
-    lastLabelsState = { labels, labelsPerAxis };
+    lastLabelsState = { labels, labelsPerAxis: fixedLabelsPerAxis };
     
     // Save to localStorage
     localStorage.setItem('axis-labels', JSON.stringify(labels));
-    localStorage.setItem('labels-per-axis', labelsPerAxis.toString());
+    localStorage.setItem('labels-per-axis', fixedLabelsPerAxis.toString());
     
     // Trigger update event
     triggerAxisLabelsUpdate();
@@ -104,19 +107,8 @@ export const saveAxisLabels = (labels, labelsPerAxis = 1) => {
  * @returns {number} Number of labels per axis
  */
 export const loadLabelsPerAxis = () => {
-  try {
-    const saved = localStorage.getItem('labels-per-axis');
-    if (saved) {
-      const parsed = parseInt(saved);
-      if (!isNaN(parsed)) {
-        return parsed;
-      }
-    }
-  } catch (error) {
-    console.error('Failed to load labels per axis:', error);
-  }
-  
-  return 1; // Default to 1 label per axis
+  // Always return 2 regardless of what's stored in localStorage
+  return 2;
 };
 
 /**
@@ -135,11 +127,31 @@ export const triggerAxisLabelsUpdate = () => {
   // Set localStorage flag to indicate update is needed
   localStorage.setItem('axis-labels-updated', 'true');
   
-  // Dispatch a custom event that components can listen for
-  window.dispatchEvent(new CustomEvent('axis-labels-updated'));
+  // Create a custom event for more reliable communication
+  const updateEvent = new CustomEvent('axis-labels-updated', {
+    detail: {
+      timestamp: Date.now(),
+      source: 'axisLabelService'
+    },
+    bubbles: true
+  });
   
-  // Also dispatch after a short delay to ensure it's processed
+  // Dispatch the custom event now
+  window.dispatchEvent(updateEvent);
+  
+  // Also dispatch after delays to ensure it's picked up
   setTimeout(() => {
     window.dispatchEvent(new CustomEvent('axis-labels-updated'));
   }, 50);
+  
+  setTimeout(() => {
+    window.dispatchEvent(new CustomEvent('axis-labels-updated'));
+    // Also re-set the localStorage flag as a backup mechanism
+    localStorage.setItem('axis-labels-updated', 'true');
+  }, 500);
+  
+  // Try once more after UI should be fully rendered
+  setTimeout(() => {
+    window.dispatchEvent(new CustomEvent('axis-labels-updated'));
+  }, 1000);
 }; 

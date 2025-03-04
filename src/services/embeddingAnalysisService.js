@@ -7,6 +7,10 @@
 import { toast } from 'react-toastify';
 import { getEmbedding } from './openaiService';
 import { loadAxisLabelIdeas } from './axisLabelIdeasService';
+import logger from '../utils/logger';
+
+// Module name for logging
+const MODULE = 'embeddingAnalysisService';
 
 // Local storage keys
 const AXIS_LABEL_EMBEDDINGS_KEY = 'axis-label-embeddings';
@@ -46,30 +50,38 @@ export const loadAxisLabelEmbeddings = () => {
  * @returns {boolean} Success status
  */
 export const saveAxisLabelEmbeddings = (embeddings) => {
+  logger.debug(MODULE, 'Saving axis label embeddings to localStorage', {
+    count: embeddings?.length || 0
+  });
+
   if (!embeddings || !Array.isArray(embeddings) || embeddings.length === 0) {
-    console.error('Invalid embeddings provided to saveAxisLabelEmbeddings');
+    logger.warn(MODULE, 'Invalid or empty embeddings array provided to saveAxisLabelEmbeddings');
     return false;
   }
 
   try {
     // Validate and filter embeddings to ensure they have text and embedding
-    const validEmbeddings = embeddings.filter(item => 
-      item && 
-      typeof item === 'object' && 
-      item.text && 
+    const validEmbeddings = embeddings.filter(item =>
+      item &&
+      typeof item === 'object' &&
+      item.text &&
       Array.isArray(item.embedding)
     );
 
     // If we have any valid embeddings after filtering
     if (validEmbeddings.length > 0) {
       localStorage.setItem(AXIS_LABEL_EMBEDDINGS_KEY, JSON.stringify(validEmbeddings));
+      logger.debug(MODULE, 'Successfully saved axis label embeddings', {
+        savedCount: validEmbeddings.length,
+        originalCount: embeddings.length
+      });
       return true;
     } else {
-      console.warn('No valid embeddings to save');
+      logger.warn(MODULE, 'No valid embeddings to save after filtering');
       return false;
     }
   } catch (error) {
-    console.error('Failed to save axis label embeddings:', error);
+    logger.error(MODULE, 'Failed to save axis label embeddings:', error);
     return false;
   }
 };
@@ -131,7 +143,7 @@ const getDimensionIndices = async (embeddings, algorithmId) => {
 };
 
 /**
- * Get embeddings for a list of suggestions
+ * Get embeddings for a list of suggestions with true parallel processing and robust error handling
  * 
  * @param {Array} suggestions - Array of suggestions
  * @param {string} apiKey - OpenAI API key
@@ -139,71 +151,153 @@ const getDimensionIndices = async (embeddings, algorithmId) => {
  * @returns {Promise<Array>} Array of suggestions with embeddings
  */
 export const getSuggestionEmbeddings = async (suggestions, apiKey, onProgress = () => {}) => {
+  logger.info(MODULE, 'Getting embeddings for suggestions', {
+    count: suggestions?.length || 0
+  });
+  
   if (!suggestions || !Array.isArray(suggestions) || suggestions.length === 0) {
+    logger.warn(MODULE, 'Empty suggestions array provided');
     throw new Error('Suggestions array is required');
   }
   
   if (!apiKey) {
+    logger.error(MODULE, 'No API key provided');
     throw new Error('API key is required');
   }
   
   // Check for cached embeddings
   const cachedEmbeddings = loadAxisLabelEmbeddings();
   const cachedMap = new Map(cachedEmbeddings.map(item => [item.text, item.embedding]));
+  logger.debug(MODULE, 'Loaded cached embeddings', { 
+    cachedCount: cachedEmbeddings.length 
+  });
   
-  // Prepare promises array
-  const suggestionPromises = suggestions.map(async (suggestion, index) => {
-    try {
-      // Check if we already have this embedding cached
-      if (cachedMap.has(suggestion)) {
-        // If cached, use it without making an API call
-        const embedding = cachedMap.get(suggestion);
-        
-        // Update progress
-        onProgress({
-          completed: index + 1,
-          total: suggestions.length,
-          progress: ((index + 1) / suggestions.length) * 100
-        });
-        
-        return { text: suggestion, embedding };
-      }
-      
-      // Get embedding from API
-      const embedding = await getEmbedding(suggestion, apiKey);
-      
-      // Update progress
-      onProgress({
-        completed: index + 1,
-        total: suggestions.length,
-        progress: ((index + 1) / suggestions.length) * 100
+  // Separate suggestions into cached and uncached
+  const cachedSuggestions = [];
+  const uncachedSuggestions = [];
+  
+  suggestions.forEach(suggestion => {
+    if (cachedMap.has(suggestion)) {
+      cachedSuggestions.push({
+        text: suggestion,
+        embedding: cachedMap.get(suggestion)
       });
-      
-      return { text: suggestion, embedding };
-    } catch (error) {
-      console.error(`Error getting embedding for "${suggestion}":`, error);
-      
-      // Still update progress even on error
-      onProgress({
-        completed: index + 1,
-        total: suggestions.length,
-        progress: ((index + 1) / suggestions.length) * 100
-      });
-      
-      // If this is an API error, show helpful message
-      if (error.message.includes('API')) {
-        toast.error(`API Error: ${error.message}. Check your API key and connection.`);
-      }
-      
-      return null;
+    } else {
+      uncachedSuggestions.push(suggestion);
     }
   });
   
-  // Wait for all promises to complete
-  const results = await Promise.all(suggestionPromises);
+  // Track progress
+  const totalSuggestions = suggestions.length;
+  let completed = cachedSuggestions.length;
   
-  // Filter out null results
-  return results.filter(result => result !== null);
+  // Report initial progress with cached items
+  onProgress({
+    completed,
+    total: totalSuggestions,
+    progress: (completed / totalSuggestions) * 100,
+    successful: cachedSuggestions.length,
+    failures: 0
+  });
+  
+  // If all are cached, return immediately
+  if (uncachedSuggestions.length === 0) {
+    logger.info(MODULE, 'All embeddings found in cache, no API calls needed');
+    return cachedSuggestions;
+  }
+  
+  // Process uncached items in truly parallel batches
+  const batchSize = 10; // Process 10 at a time to avoid rate limits
+  const results = [...cachedSuggestions];
+  const failures = [];
+  
+  // Split uncached suggestions into batches
+  const batches = [];
+  for (let i = 0; i < uncachedSuggestions.length; i += batchSize) {
+    batches.push(uncachedSuggestions.slice(i, i + batchSize));
+  }
+  
+  // Process each batch in parallel
+  for (const batch of batches) {
+    logger.debug(MODULE, `Processing batch of ${batch.length} suggestions`);
+    
+    // Create a promise for each suggestion in the batch with timeout
+    const batchPromises = batch.map(suggestion => {
+      return Promise.race([
+        // The embedding request
+        (async () => {
+          try {
+            logger.debug(MODULE, `Fetching embedding for: "${suggestion.substring(0, 30)}..."`);
+            const embedding = await getEmbedding(suggestion, apiKey, 1);
+            return { success: true, text: suggestion, embedding };
+          } catch (error) {
+            logger.error(MODULE, `Failed to get embedding for "${suggestion}": ${error.message}`);
+            return { success: false, text: suggestion, error: error.message };
+          }
+        })(),
+        
+        // The timeout after 5 seconds
+        new Promise(resolve => {
+          setTimeout(() => {
+            logger.warn(MODULE, `Timeout fetching embedding for: "${suggestion.substring(0, 30)}..."`);
+            resolve({ success: false, text: suggestion, error: 'Request timed out after 5 seconds' });
+          }, 5000);
+        })
+      ]);
+    });
+    
+    // Wait for all promises in this batch to resolve
+    const batchResults = await Promise.all(batchPromises);
+    
+    // Process the results
+    batchResults.forEach(result => {
+      completed++;
+      
+      if (result.success) {
+        results.push({ 
+          text: result.text, 
+          embedding: result.embedding 
+        });
+      } else {
+        failures.push({ 
+          text: result.text, 
+          error: result.error 
+        });
+      }
+      
+      // Update progress after each item
+      onProgress({
+        completed,
+        total: totalSuggestions,
+        progress: (completed / totalSuggestions) * 100,
+        successful: results.length,
+        failures: failures.length
+      });
+    });
+  }
+  
+  // Log the final results
+  logger.info(MODULE, 'Completed getting embeddings', {
+    total: totalSuggestions,
+    successful: results.length - cachedSuggestions.length,
+    fromCache: cachedSuggestions.length,
+    failed: failures.length
+  });
+  
+  // Save successful results to cache
+  if (results.length > cachedSuggestions.length) {
+    logger.debug(MODULE, 'Saving new embeddings to cache');
+    saveAxisLabelEmbeddings(results);
+  }
+  
+  // As long as we have at least 3 embeddings, consider it a success
+  if (results.length >= 3) {
+    logger.info(MODULE, `Returning ${results.length} embeddings (${failures.length} failed)`);
+    return results;
+  } else {
+    logger.error(MODULE, `Not enough embeddings obtained: ${results.length} (need at least 3)`);
+    throw new Error(`Not enough embeddings: got ${results.length}, need at least 3`);
+  }
 };
 
 /**
@@ -292,7 +386,7 @@ const findBestAxisLabels = (suggestionEmbeddings, dimensionIndices, labelsPerAxi
  * @param {Object} options - Options for analyzing embeddings
  * @param {Array} options.suggestions - Array of suggestions to analyze
  * @param {string} options.algorithmId - Algorithm ID
- * @param {number} options.labelsPerAxis - Number of labels per axis
+ * @param {number} options.labelsPerAxis - Number of labels per axis (ignored, always uses 2)
  * @param {Function} options.onProgress - Callback for progress updates
  * @param {Function} options.onComplete - Callback when complete
  * @returns {Promise<Object>} Object with best labels and additional labels
@@ -300,25 +394,28 @@ const findBestAxisLabels = (suggestionEmbeddings, dimensionIndices, labelsPerAxi
 export const analyzeEmbeddingsForAxisLabels = async ({
   suggestions,
   algorithmId,
-  labelsPerAxis = 1,
+  labelsPerAxis = 2, // Parameter is ignored, always uses 2
   onProgress = () => {},
   onComplete = () => {}
 }) => {
-  // Input validation
+  // Input validation with softer errors
   if (!suggestions || !Array.isArray(suggestions) || suggestions.length === 0) {
+    logger.warn(MODULE, 'No suggestions available for analysis');
     toast.warning('No suggestions available. Generate suggestions first.');
     return null;
   }
   
   if (!algorithmId) {
-    toast.error('No dimension reduction algorithm specified');
+    logger.warn(MODULE, 'No algorithm ID provided');
+    toast.warning('No dimension reduction algorithm specified');
     return null;
   }
   
   // Get API key
   const apiKey = localStorage.getItem('openai-api-key');
   if (!apiKey) {
-    toast.error('Please add your OpenAI API key in settings first');
+    logger.warn(MODULE, 'No API key found');
+    toast.warning('Please add your OpenAI API key in settings');
     return null;
   }
   
@@ -326,36 +423,78 @@ export const analyzeEmbeddingsForAxisLabels = async ({
     // Get saved embeddings for words
     const savedWords = localStorage.getItem('embedding-words');
     if (!savedWords) {
+      logger.warn(MODULE, 'No word embeddings found');
       toast.warning('No embeddings found. Add some words first.');
       return null;
     }
     
-    const parsedWords = JSON.parse(savedWords);
-    const wordsWithEmbeddings = parsedWords.filter(w => w.embedding);
+    // Parse word embeddings with error handling
+    let parsedWords = [];
+    try {
+      parsedWords = JSON.parse(savedWords);
+    } catch (error) {
+      logger.error(MODULE, 'Error parsing saved words', error);
+      toast.error('Error reading saved words');
+      // Continue with empty array
+    }
+    
+    const wordsWithEmbeddings = parsedWords.filter(w => w && w.embedding);
     
     if (wordsWithEmbeddings.length < 3) {
-      toast.error(`Not enough words with embeddings found (need at least 3, found ${wordsWithEmbeddings.length})`);
+      logger.warn(MODULE, `Only ${wordsWithEmbeddings.length} words with embeddings found (need at least 3)`);
+      toast.warning(`Not enough words with embeddings (need at least 3, found ${wordsWithEmbeddings.length})`);
       return null;
     }
     
     // Get embeddings for all suggestions - with progress updates
-    const suggestionEmbeddings = await getSuggestionEmbeddings(
-      suggestions,
-      apiKey,
-      onProgress
-    );
+    let suggestionEmbeddings = [];
+    try {
+      logger.info(MODULE, 'Getting embeddings for suggestions', { count: suggestions.length });
+      suggestionEmbeddings = await getSuggestionEmbeddings(
+        suggestions,
+        apiKey,
+        onProgress
+      );
+    } catch (error) {
+      // Check if we have cached embeddings that might be usable
+      logger.error(MODULE, 'Error getting suggestion embeddings, checking cache', error);
+      const cachedEmbeddings = loadAxisLabelEmbeddings();
+      
+      if (cachedEmbeddings.length >= 3) {
+        // If we have enough cached embeddings, use those instead of failing
+        logger.info(MODULE, `Using ${cachedEmbeddings.length} cached embeddings as fallback`);
+        toast.info(`Using cached embeddings as fallback (${cachedEmbeddings.length} available)`);
+        suggestionEmbeddings = cachedEmbeddings;
+      } else {
+        // Really not enough embeddings to continue
+        logger.error(MODULE, 'Not enough cached embeddings to continue', { 
+          count: cachedEmbeddings.length 
+        });
+        toast.error('Could not get enough embeddings. Please try again.');
+        return null;
+      }
+    }
     
-    if (suggestionEmbeddings.length === 0) {
-      toast.error('Could not get embeddings for suggestions. Please try again.');
+    if (suggestionEmbeddings.length < 3) {
+      logger.error(MODULE, `Only ${suggestionEmbeddings.length} suggestion embeddings found (need at least 3)`);
+      toast.error('Not enough suggestion embeddings to analyze.');
       return null;
     }
     
     // Get dimension indices
-    const wordEmbeddings = wordsWithEmbeddings.map(w => w.embedding);
-    const dimensionIndicesObj = await getDimensionIndices(wordEmbeddings, algorithmId);
+    let dimensionIndicesObj = null;
+    try {
+      const wordEmbeddings = wordsWithEmbeddings.map(w => w.embedding);
+      dimensionIndicesObj = await getDimensionIndices(wordEmbeddings, algorithmId);
+    } catch (error) {
+      logger.error(MODULE, 'Error getting dimension indices', error);
+      toast.error('Could not analyze dimensions. Try a different algorithm.');
+      return null;
+    }
     
     if (!dimensionIndicesObj) {
-      toast.error('Could not determine dimension indices. Try a different algorithm.');
+      logger.warn(MODULE, 'No dimension indices obtained');
+      toast.warning('Could not determine dimension indices. Try a different algorithm.');
       return null;
     }
     
@@ -366,15 +505,56 @@ export const analyzeEmbeddingsForAxisLabels = async ({
       z: dimensionIndicesObj.zDimensionIndex
     };
     
-    // Find the best axis labels
-    const result = findBestAxisLabels(
-      suggestionEmbeddings,
-      dimensionIndicesObj,
-      labelsPerAxis
-    );
+    // Find the best axis labels - always use 2 labels per axis
+    let result = null;
+    try {
+      result = findBestAxisLabels(
+        suggestionEmbeddings,
+        dimensionIndicesObj,
+        2 // Always use 2 labels per axis
+      );
+    } catch (error) {
+      logger.error(MODULE, 'Error finding best axis labels', error);
+      
+      // Create fallback labels as a last resort
+      const fallbackLabels = {
+        bestLabels: {
+          x: 'X',
+          y: 'Y',
+          z: 'Z',
+          negX: '-X',
+          negY: '-Y',
+          negZ: '-Z'
+        },
+        additionalLabels: {
+          x: [], y: [], z: [],
+          negX: [], negY: [], negZ: []
+        }
+      };
+      
+      // Try to populate with some data if possible
+      if (suggestionEmbeddings.length > 0) {
+        if (suggestionEmbeddings[0]) fallbackLabels.bestLabels.x = suggestionEmbeddings[0].text;
+        if (suggestionEmbeddings[1]) fallbackLabels.bestLabels.y = suggestionEmbeddings[1].text;
+        if (suggestionEmbeddings[2]) fallbackLabels.bestLabels.z = suggestionEmbeddings[2].text;
+        
+        const lastIndex = suggestionEmbeddings.length - 1;
+        if (suggestionEmbeddings[lastIndex]) fallbackLabels.bestLabels.negZ = suggestionEmbeddings[lastIndex].text;
+        if (suggestionEmbeddings[lastIndex-1]) fallbackLabels.bestLabels.negY = suggestionEmbeddings[lastIndex-1].text;
+        if (suggestionEmbeddings[lastIndex-2]) fallbackLabels.bestLabels.negX = suggestionEmbeddings[lastIndex-2].text;
+      }
+      
+      toast.warning('Using basic axis labels due to analysis error');
+      result = fallbackLabels;
+    }
     
     // Save additional labels to localStorage
-    localStorage.setItem(AXIS_ADDITIONAL_LABELS_KEY, JSON.stringify(result.additionalLabels));
+    try {
+      localStorage.setItem(AXIS_ADDITIONAL_LABELS_KEY, JSON.stringify(result.additionalLabels));
+    } catch (error) {
+      logger.error(MODULE, 'Error saving additional labels', error);
+      // Non-fatal error, continue
+    }
     
     // Include the suggestionEmbeddings and dimension indices in the result
     const finalResult = {
@@ -385,12 +565,17 @@ export const analyzeEmbeddingsForAxisLabels = async ({
     
     // Call complete callback
     if (onComplete) {
-      onComplete(finalResult);
+      try {
+        onComplete(finalResult);
+      } catch (error) {
+        logger.error(MODULE, 'Error in onComplete callback', error);
+        // Non-fatal error, continue
+      }
     }
     
     return finalResult;
   } catch (error) {
-    console.error('Error analyzing embeddings for axis labels:', error);
+    logger.error(MODULE, 'Unexpected error in analyzeEmbeddingsForAxisLabels', error);
     
     // Show different error messages depending on the error
     if (error.message.includes('dimension')) {
@@ -409,10 +594,10 @@ export const analyzeEmbeddingsForAxisLabels = async ({
  * Analyzes embeddings for axis labels with clearer flag handling
  * 
  * @param {string} algorithmId - Current algorithm ID
- * @param {number} labelsPerAxis - Number of labels per axis
+ * @param {number} labelsPerAxis - Number of labels per axis (ignored, always uses 2)
  * @returns {Promise<Object|null>} Result object or null
  */
-export const autoUpdateAxisLabels = async (algorithmId, labelsPerAxis = 1) => {
+export const autoUpdateAxisLabels = async (algorithmId, labelsPerAxis = 2) => {
   // Check for update triggers
   const shouldUpdate = localStorage.getItem('force-axis-label-update') === 'true';
   const embedsUpdated = localStorage.getItem('embeddings-updated') === 'true';
@@ -479,7 +664,7 @@ export const autoUpdateAxisLabels = async (algorithmId, labelsPerAxis = 1) => {
           saveAxisLabelEmbeddings(suggestionEmbeddings);
           
           // Continue with the rest of the function using the new suggestions
-          return continueWithAxisLabelUpdate(newSuggestions, wordsWithEmbeddings, algorithmId, labelsPerAxis);
+          return continueWithAxisLabelUpdate(newSuggestions, wordsWithEmbeddings, algorithmId, 2);
         }
       } catch (error) {
         console.error('Error generating new label ideas:', error);
@@ -487,13 +672,13 @@ export const autoUpdateAxisLabels = async (algorithmId, labelsPerAxis = 1) => {
       
       // If we can't generate new suggestions, continue with what we have if possible
       if (cachedSuggestions && cachedSuggestions.length >= 3) {
-        return continueWithAxisLabelUpdate(cachedSuggestions, wordsWithEmbeddings, algorithmId, labelsPerAxis);
+        return continueWithAxisLabelUpdate(cachedSuggestions, wordsWithEmbeddings, algorithmId, 2);
       }
       
       return null;
     }
     
-    return continueWithAxisLabelUpdate(cachedSuggestions, wordsWithEmbeddings, algorithmId, labelsPerAxis);
+    return continueWithAxisLabelUpdate(cachedSuggestions, wordsWithEmbeddings, algorithmId, 2);
   } catch (error) {
     console.error('Error in autoUpdateAxisLabels:', error);
     return null;
@@ -501,7 +686,7 @@ export const autoUpdateAxisLabels = async (algorithmId, labelsPerAxis = 1) => {
 };
 
 // Helper function to continue with axis label update once we have suggestions
-const continueWithAxisLabelUpdate = async (suggestions, wordsWithEmbeddings, algorithmId, labelsPerAxis) => {
+const continueWithAxisLabelUpdate = async (suggestions, wordsWithEmbeddings, algorithmId, labelsPerAxis = 2) => {
   try {
     // Load cached embeddings
     const cachedEmbeddings = loadAxisLabelEmbeddings();
@@ -526,11 +711,11 @@ const continueWithAxisLabelUpdate = async (suggestions, wordsWithEmbeddings, alg
       return null;
     }
     
-    // Find the best axis labels
+    // Find the best axis labels - always use 2 labels per axis
     const result = findBestAxisLabels(
       suggestionEmbeddingsArray,
       dimensionIndicesObj,
-      labelsPerAxis
+      2 // Always use 2 labels per axis
     );
     
     // Save additional labels to localStorage
@@ -548,7 +733,7 @@ const continueWithAxisLabelUpdate = async (suggestions, wordsWithEmbeddings, alg
     
     // Import the saveAxisLabels function
     const { saveAxisLabels } = await import('./axisLabelService');
-    saveAxisLabels(enhancedLabels, labelsPerAxis);
+    saveAxisLabels(enhancedLabels, 2);
     
     // Set a flag to notify components that axis labels have been updated
     localStorage.setItem('axis-labels-updated', 'true');
@@ -562,105 +747,371 @@ const continueWithAxisLabelUpdate = async (suggestions, wordsWithEmbeddings, alg
 
 /**
  * Refreshes axis labels using only cached data (no API calls)
+ * With improved error handling and fallback capabilities
  * 
  * @param {string} algorithmId - Current dimension reduction algorithm ID
- * @param {number} labelsPerAxis - Number of labels to show per axis
+ * @param {number} labelsPerAxis - Number of labels per axis (ignored, always uses 2)
  * @param {Function} onComplete - Callback when complete
- * @returns {Promise<Object>} Result object with best labels, or null if failed
+ * @returns {Promise<Object>} Result object with best labels, or default labels if failed
  */
-export const refreshLabelsFromCache = async (algorithmId, labelsPerAxis = 1, onComplete = () => {}) => {
-  if (!algorithmId) {
-    console.warn('No algorithm ID provided for refreshing axis labels');
-    return null;
-  }
-
+export const refreshLabelsFromCache = async (algorithmId, labelsPerAxis = 2, onComplete = () => {}) => {
+  logger.info(MODULE, 'Refreshing axis labels from cache', { algorithmId });
+  
+  // Always have default labels as fallback
+  const defaultLabels = {
+    x: 'X',
+    y: 'Y',
+    z: 'Z',
+    negX: '-X',
+    negY: '-Y',
+    negZ: '-Z'
+  };
+  
   try {
-    // Load cached axis label suggestions
-    const cachedSuggestions = loadAxisLabelIdeas();
-    if (!cachedSuggestions || cachedSuggestions.length < 3) {
-      console.log('Not enough cached suggestions for refreshing axis labels');
-      return null;
+    if (!algorithmId) {
+      logger.warn(MODULE, 'No algorithm ID provided for refreshing axis labels');
+      return defaultLabels; // Return default labels instead of null
     }
+
+    // Load cached axis label suggestions
+    logger.debug(MODULE, 'Loading cached axis label suggestions');
+    const cachedSuggestions = loadAxisLabelIdeas();
+    logger.debug(MODULE, 'Cached suggestions loaded', { count: cachedSuggestions?.length });
     
     // Load cached embeddings
+    logger.debug(MODULE, 'Loading cached embeddings');
     const cachedEmbeddings = loadAxisLabelEmbeddings();
-    
+    logger.debug(MODULE, 'Cached embeddings loaded', { count: cachedEmbeddings?.length });
+
+    // If we don't have enough cached data, use defaults but don't fail
+    if (!cachedSuggestions || cachedSuggestions.length < 3 || !cachedEmbeddings || cachedEmbeddings.length < 3) {
+      logger.warn(MODULE, 'Not enough cached data for axis label refresh', { 
+        suggestionsCount: cachedSuggestions?.length || 0,
+        embeddingsCount: cachedEmbeddings?.length || 0
+      });
+      
+      // Try to use whatever we have
+      if (cachedEmbeddings && cachedEmbeddings.length > 0) {
+        let result = {};
+        
+        // Use the first few embeddings for basic label assignment
+        if (cachedEmbeddings[0]) result.x = cachedEmbeddings[0].text;
+        if (cachedEmbeddings[1]) result.y = cachedEmbeddings[1].text;
+        if (cachedEmbeddings[2]) result.z = cachedEmbeddings[2].text;
+        
+        // If we have more, use them for negative axes
+        const lastIndex = cachedEmbeddings.length - 1;
+        if (cachedEmbeddings[lastIndex]) result.negZ = cachedEmbeddings[lastIndex].text;
+        if (cachedEmbeddings.length > 1 && cachedEmbeddings[lastIndex-1]) result.negY = cachedEmbeddings[lastIndex-1].text;
+        if (cachedEmbeddings.length > 2 && cachedEmbeddings[lastIndex-2]) result.negX = cachedEmbeddings[lastIndex-2].text;
+        
+        // Fill in any missing values with defaults
+        const enhancedLabels = {
+          ...defaultLabels,
+          ...result
+        };
+        
+        // Call onComplete with the partial result
+        if (onComplete) {
+          onComplete({
+            bestLabels: enhancedLabels,
+            additionalLabels: {
+              x: [], y: [], z: [],
+              negX: [], negY: [], negZ: []
+            },
+            dimensionIndices: { x: 0, y: 1, z: 2 }
+          });
+        }
+        
+        return enhancedLabels;
+      }
+      
+      // If we can't even create partial labels, return defaults
+      if (onComplete) {
+        onComplete({
+          bestLabels: defaultLabels,
+          additionalLabels: {
+            x: [], y: [], z: [],
+            negX: [], negY: [], negZ: []
+          },
+          dimensionIndices: { x: 0, y: 1, z: 2 }
+        });
+      }
+      
+      return defaultLabels;
+    }
+
     // Filter suggestion embeddings to match cached suggestions
-    const suggestionEmbeddingsArray = cachedEmbeddings.filter(item => 
+    logger.debug(MODULE, 'Filtering suggestion embeddings to match cached suggestions');
+    const suggestionEmbeddingsArray = cachedEmbeddings.filter(item =>
       item && item.text && cachedSuggestions.includes(item.text)
     );
     
-    // Check if we have enough embeddings
+    // Check if we have enough embeddings after filtering
     if (suggestionEmbeddingsArray.length < 3) {
-      console.log('Not enough cached embeddings for refreshing axis labels');
-      return null;
+      logger.warn(MODULE, 'Not enough matching embeddings after filtering', { 
+        filteredCount: suggestionEmbeddingsArray.length 
+      });
+      
+      // Use whatever embeddings we have, even if they don't match suggestions
+      const usableEmbeddings = cachedEmbeddings.length >= 3 ? cachedEmbeddings : suggestionEmbeddingsArray;
+      
+      let result = {};
+      
+      // Use the first few embeddings for basic label assignment
+      if (usableEmbeddings[0]) result.x = usableEmbeddings[0].text;
+      if (usableEmbeddings[1]) result.y = usableEmbeddings[1].text;
+      if (usableEmbeddings[2]) result.z = usableEmbeddings[2].text;
+      
+      // If we have more, use them for negative axes
+      const lastIndex = usableEmbeddings.length - 1;
+      if (usableEmbeddings[lastIndex]) result.negZ = usableEmbeddings[lastIndex].text;
+      if (usableEmbeddings.length > 1 && usableEmbeddings[lastIndex-1]) result.negY = usableEmbeddings[lastIndex-1].text;
+      if (usableEmbeddings.length > 2 && usableEmbeddings[lastIndex-2]) result.negX = usableEmbeddings[lastIndex-2].text;
+      
+      // Fill in any missing values with defaults
+      const enhancedLabels = {
+        ...defaultLabels,
+        ...result
+      };
+      
+      // Call onComplete with the partial result
+      if (onComplete) {
+        onComplete({
+          bestLabels: enhancedLabels,
+          additionalLabels: {
+            x: [], y: [], z: [],
+            negX: [], negY: [], negZ: []
+          },
+          dimensionIndices: { x: 0, y: 1, z: 2 }
+        });
+      }
+      
+      return enhancedLabels;
     }
-    
+
     // Get saved embeddings for words
+    logger.debug(MODULE, 'Loading saved word embeddings');
     const savedWords = localStorage.getItem('embedding-words');
+    
     if (!savedWords) {
-      console.log('No word embeddings found for refreshing axis labels');
-      return null;
+      logger.warn(MODULE, 'No word embeddings found, using filtered suggestion embeddings directly');
+      
+      // Use suggestion embeddings directly for labels
+      let result = {};
+      
+      if (suggestionEmbeddingsArray[0]) result.x = suggestionEmbeddingsArray[0].text;
+      if (suggestionEmbeddingsArray[1]) result.y = suggestionEmbeddingsArray[1].text;
+      if (suggestionEmbeddingsArray[2]) result.z = suggestionEmbeddingsArray[2].text;
+      
+      const lastIndex = suggestionEmbeddingsArray.length - 1;
+      if (suggestionEmbeddingsArray[lastIndex]) result.negZ = suggestionEmbeddingsArray[lastIndex].text;
+      if (suggestionEmbeddingsArray.length > 1 && suggestionEmbeddingsArray[lastIndex-1]) result.negY = suggestionEmbeddingsArray[lastIndex-1].text;
+      if (suggestionEmbeddingsArray.length > 2 && suggestionEmbeddingsArray[lastIndex-2]) result.negX = suggestionEmbeddingsArray[lastIndex-2].text;
+      
+      const enhancedLabels = {
+        ...defaultLabels,
+        ...result
+      };
+      
+      // Call onComplete with the basic result
+      if (onComplete) {
+        onComplete({
+          bestLabels: enhancedLabels,
+          additionalLabels: {
+            x: [], y: [], z: [],
+            negX: [], negY: [], negZ: []
+          },
+          dimensionIndices: { x: 0, y: 1, z: 2 }
+        });
+      }
+      
+      return enhancedLabels;
+    }
+
+    // Parse word embeddings with error handling
+    let parsedWords = [];
+    try {
+      parsedWords = JSON.parse(savedWords);
+    } catch (error) {
+      logger.error(MODULE, 'Error parsing saved words', error);
+      // Continue with empty array
     }
     
-    const parsedWords = JSON.parse(savedWords);
-    const wordsWithEmbeddings = parsedWords.filter(w => w.embedding);
+    const wordsWithEmbeddings = parsedWords.filter(w => w && w.embedding);
     
     if (wordsWithEmbeddings.length < 3) {
-      console.log(`Not enough words with embeddings (${wordsWithEmbeddings.length}) for refreshing axis labels`);
-      return null;
+      logger.warn(MODULE, `Not enough words with embeddings (${wordsWithEmbeddings.length}), using suggestion embeddings`);
+      
+      // Use suggestion embeddings directly for labels
+      let result = {};
+      
+      if (suggestionEmbeddingsArray[0]) result.x = suggestionEmbeddingsArray[0].text;
+      if (suggestionEmbeddingsArray[1]) result.y = suggestionEmbeddingsArray[1].text;
+      if (suggestionEmbeddingsArray[2]) result.z = suggestionEmbeddingsArray[2].text;
+      
+      const lastIndex = suggestionEmbeddingsArray.length - 1;
+      if (suggestionEmbeddingsArray[lastIndex]) result.negZ = suggestionEmbeddingsArray[lastIndex].text;
+      if (suggestionEmbeddingsArray.length > 1 && suggestionEmbeddingsArray[lastIndex-1]) result.negY = suggestionEmbeddingsArray[lastIndex-1].text;
+      if (suggestionEmbeddingsArray.length > 2 && suggestionEmbeddingsArray[lastIndex-2]) result.negX = suggestionEmbeddingsArray[lastIndex-2].text;
+      
+      const enhancedLabels = {
+        ...defaultLabels,
+        ...result
+      };
+      
+      // Call onComplete with the basic result
+      if (onComplete) {
+        onComplete({
+          bestLabels: enhancedLabels,
+          additionalLabels: {
+            x: [], y: [], z: [],
+            negX: [], negY: [], negZ: []
+          },
+          dimensionIndices: { x: 0, y: 1, z: 2 }
+        });
+      }
+      
+      return enhancedLabels;
     }
-    
-    // Get dimension indices
-    const wordEmbeddings = wordsWithEmbeddings.map(w => w.embedding);
-    const dimensionIndicesObj = await getDimensionIndices(wordEmbeddings, algorithmId);
-    
+
+    // Get dimension indices with error handling
+    let dimensionIndicesObj = null;
+    try {
+      logger.debug(MODULE, 'Getting dimension indices');
+      const wordEmbeddings = wordsWithEmbeddings.map(w => w.embedding);
+      dimensionIndicesObj = await getDimensionIndices(wordEmbeddings, algorithmId);
+    } catch (error) {
+      logger.error(MODULE, 'Error getting dimension indices', error);
+      
+      // Use basic dimension indices as fallback
+      dimensionIndicesObj = {
+        xDimensionIndex: 0,
+        yDimensionIndex: 1,
+        zDimensionIndex: 2
+      };
+    }
+
     if (!dimensionIndicesObj) {
-      console.log('Could not determine dimension indices for refreshing axis labels');
-      return null;
+      logger.warn(MODULE, 'Could not determine dimension indices, using defaults');
+      dimensionIndicesObj = {
+        xDimensionIndex: 0,
+        yDimensionIndex: 1,
+        zDimensionIndex: 2
+      };
     }
     
     // Find the best axis labels
-    const result = findBestAxisLabels(
-      suggestionEmbeddingsArray,
-      dimensionIndicesObj,
-      labelsPerAxis
-    );
-    
+    let bestLabelsResult = null;
+    try {
+      logger.debug(MODULE, 'Finding best axis labels');
+      bestLabelsResult = findBestAxisLabels(
+        suggestionEmbeddingsArray,
+        dimensionIndicesObj,
+        2 // Always use 2 labels per axis
+      );
+    } catch (error) {
+      logger.error(MODULE, 'Error finding best axis labels', error);
+      
+      // Create basic result as fallback
+      bestLabelsResult = {
+        bestLabels: {
+          ...defaultLabels
+        },
+        additionalLabels: {
+          x: [], y: [], z: [],
+          negX: [], negY: [], negZ: []
+        }
+      };
+      
+      // Try to populate with some meaningful data
+      if (suggestionEmbeddingsArray.length > 0) {
+        if (suggestionEmbeddingsArray[0]) bestLabelsResult.bestLabels.x = suggestionEmbeddingsArray[0].text;
+        if (suggestionEmbeddingsArray[1]) bestLabelsResult.bestLabels.y = suggestionEmbeddingsArray[1].text;
+        if (suggestionEmbeddingsArray[2]) bestLabelsResult.bestLabels.z = suggestionEmbeddingsArray[2].text;
+        
+        const lastIndex = suggestionEmbeddingsArray.length - 1;
+        if (suggestionEmbeddingsArray[lastIndex]) bestLabelsResult.bestLabels.negZ = suggestionEmbeddingsArray[lastIndex].text;
+        if (suggestionEmbeddingsArray.length > 1 && suggestionEmbeddingsArray[lastIndex-1]) bestLabelsResult.bestLabels.negY = suggestionEmbeddingsArray[lastIndex-1].text;
+        if (suggestionEmbeddingsArray.length > 2 && suggestionEmbeddingsArray[lastIndex-2]) bestLabelsResult.bestLabels.negX = suggestionEmbeddingsArray[lastIndex-2].text;
+      }
+    }
+
     // Save additional labels to localStorage
-    localStorage.setItem(AXIS_ADDITIONAL_LABELS_KEY, JSON.stringify(result.additionalLabels));
-    
+    try {
+      logger.debug(MODULE, 'Saving additional labels to localStorage');
+      localStorage.setItem(AXIS_ADDITIONAL_LABELS_KEY, JSON.stringify(bestLabelsResult.additionalLabels));
+    } catch (error) {
+      logger.error(MODULE, 'Error saving additional labels', error);
+      // Non-fatal error, continue
+    }
+
     // Create enhanced labels object with negative axes
     const enhancedLabels = {
-      x: result.bestLabels.x,
-      y: result.bestLabels.y,
-      z: result.bestLabels.z,
-      negX: result.bestLabels.negX,
-      negY: result.bestLabels.negY,
-      negZ: result.bestLabels.negZ
+      ...defaultLabels, // Include defaults as fallback
+      ...bestLabelsResult.bestLabels
     };
-    
+
     // Import the saveAxisLabels function
-    const { saveAxisLabels } = await import('./axisLabelService');
-    saveAxisLabels(enhancedLabels, labelsPerAxis);
-    
+    try {
+      logger.debug(MODULE, 'Importing saveAxisLabels service');
+      const { saveAxisLabels } = await import('./axisLabelService');
+      saveAxisLabels(enhancedLabels, 2);
+      logger.debug(MODULE, 'Axis labels saved', enhancedLabels);
+    } catch (error) {
+      logger.error(MODULE, 'Error saving axis labels', error);
+      // Non-fatal error, continue
+    }
+
     // Set a flag to notify components that axis labels have been updated
-    localStorage.setItem('axis-labels-updated', 'true');
-    
+    try {
+      logger.debug(MODULE, 'Setting axis-labels-updated flag');
+      localStorage.setItem('axis-labels-updated', 'true');
+    } catch (error) {
+      logger.error(MODULE, 'Error setting axis-labels-updated flag', error);
+      // Non-fatal error, continue
+    }
+
     // Call onComplete callback with the result
-    onComplete({
-      bestLabels: enhancedLabels,
-      additionalLabels: result.additionalLabels,
-      dimensionIndices: {
-        x: dimensionIndicesObj.xDimensionIndex,
-        y: dimensionIndicesObj.yDimensionIndex,
-        z: dimensionIndicesObj.zDimensionIndex
+    if (onComplete) {
+      try {
+        logger.debug(MODULE, 'Calling onComplete callback');
+        onComplete({
+          bestLabels: enhancedLabels,
+          additionalLabels: bestLabelsResult.additionalLabels,
+          dimensionIndices: {
+            x: dimensionIndicesObj.xDimensionIndex,
+            y: dimensionIndicesObj.yDimensionIndex,
+            z: dimensionIndicesObj.zDimensionIndex
+          }
+        });
+      } catch (error) {
+        logger.error(MODULE, 'Error in onComplete callback', error);
+        // Non-fatal error, continue
       }
-    });
+    }
     
+    logger.info(MODULE, 'Axis labels refreshed from cache successfully', enhancedLabels);
     return enhancedLabels;
   } catch (error) {
-    console.error('Error refreshing axis labels from cache:', error);
-    return null;
+    logger.error(MODULE, 'Unexpected error refreshing axis labels from cache:', error);
+    
+    // Return default labels instead of null on error
+    if (onComplete) {
+      try {
+        onComplete({
+          bestLabels: defaultLabels,
+          additionalLabels: {
+            x: [], y: [], z: [],
+            negX: [], negY: [], negZ: []
+          },
+          dimensionIndices: { x: 0, y: 1, z: 2 }
+        });
+      } catch (innerError) {
+        logger.error(MODULE, 'Error in onComplete callback during error handling', innerError);
+      }
+    }
+    
+    return defaultLabels;
   }
 }; 
